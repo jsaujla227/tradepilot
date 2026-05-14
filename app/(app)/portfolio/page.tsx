@@ -1,20 +1,28 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile } from "@/lib/profile";
-import { getHoldings, getRecentTransactions } from "@/lib/portfolio";
+import { getHoldingsView, getRecentTransactions } from "@/lib/portfolio";
 import { HoldingsTable } from "./_components/holdings-table";
 import { AddTransactionForm } from "./_components/add-transaction-form";
 import { TransactionsList } from "./_components/transactions-list";
 
 export const metadata = { title: "Portfolio · TradePilot" };
 
+// Holdings query hits Alpaca for live quotes — skip Next.js's static cache so
+// every reload reads through to the 60s Upstash layer.
+export const dynamic = "force-dynamic";
+
 export default async function PortfolioPage() {
   const session = await getUserAndProfile();
   if (!session) redirect("/login?next=/portfolio");
 
-  const [holdings, transactions] = await Promise.all([
-    getHoldings(),
+  const [holdingsView, transactions] = await Promise.all([
+    getHoldingsView(),
     getRecentTransactions(50),
   ]);
+
+  const description = holdingsView.quotes_attempted
+    ? "Live prices refresh every 60 seconds. Open P/L is market value minus cost basis."
+    : "Set ALPACA_API_KEY_ID + ALPACA_API_SECRET_KEY to unlock live prices and open P/L.";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 md:py-14 space-y-8">
@@ -27,8 +35,7 @@ export default async function PortfolioPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
             <p className="mt-1 text-sm text-muted-foreground leading-relaxed max-w-2xl">
-              Holdings are computed from your transactions using average cost
-              on the net position. Live prices and market value land in M5.
+              {description}
             </p>
           </div>
           <a
@@ -41,7 +48,7 @@ export default async function PortfolioPage() {
         </div>
       </header>
 
-      <HoldingsTable holdings={holdings} />
+      <HoldingsTable view={holdingsView} />
 
       <AddTransactionForm />
 

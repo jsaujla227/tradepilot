@@ -9,6 +9,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // Next's `server-only` guard is a runtime no-op outside Next; stub it
+      // so Vitest can pull in modules that import it (lib/alpaca/data, lib/portfolio).
+      "server-only": path.resolve(__dirname, "test/stubs/server-only.ts"),
     },
   },
 });
