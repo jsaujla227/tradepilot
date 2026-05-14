@@ -9,6 +9,8 @@ const settingsSchema = z.object({
   max_risk_per_trade_pct: z.coerce.number().positive().lt(100),
   daily_loss_limit_pct: z.coerce.number().positive().lt(100),
   ai_token_budget_monthly: z.coerce.number().int().min(0),
+  agent_enabled: z.coerce.boolean().default(false),
+  agent_daily_capital_limit: z.coerce.number().min(0).max(1e8),
 });
 
 export type SettingsState = {
@@ -25,6 +27,8 @@ export async function updateSettings(
     max_risk_per_trade_pct: formData.get("max_risk_per_trade_pct"),
     daily_loss_limit_pct: formData.get("daily_loss_limit_pct"),
     ai_token_budget_monthly: formData.get("ai_token_budget_monthly"),
+    agent_enabled: formData.get("agent_enabled") === "on",
+    agent_daily_capital_limit: formData.get("agent_daily_capital_limit"),
   });
   if (!parsed.success) {
     return {

@@ -61,6 +61,10 @@ export function SettingsForm({
     max_risk_per_trade_pct: number;
     daily_loss_limit_pct: number;
     ai_token_budget_monthly: number;
+    broker_mode: "paper" | "live";
+    real_money_unlocked: boolean;
+    agent_enabled: boolean;
+    agent_daily_capital_limit: number;
   };
 }) {
   const [state, formAction, pending] = useActionState<SettingsState, FormData>(
@@ -113,6 +117,56 @@ export function SettingsForm({
         min={0}
         suffix="tk"
       />
+
+      {/* Broker section — read-only until M17 */}
+      <div className="space-y-3">
+        <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+          Broker
+        </p>
+        <div className="rounded-lg border border-border/60 bg-background/30 px-4 py-3 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Mode</span>
+            <span className="text-xs font-mono text-foreground/80 uppercase">
+              {initial.broker_mode}
+            </span>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Live trading unlocks after the agent meets paper-trading performance
+            thresholds (win rate, expectancy, max drawdown). Managed in M16.
+          </p>
+        </div>
+      </div>
+
+      {/* Agent section */}
+      <div className="space-y-3">
+        <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+          Autonomous agent
+        </p>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            name="agent_enabled"
+            defaultChecked={initial.agent_enabled}
+            className="mt-0.5 h-4 w-4 rounded border-border accent-foreground cursor-pointer"
+          />
+          <span className="text-sm leading-snug">
+            Enable agent
+            <span className="block text-[11px] text-muted-foreground mt-0.5">
+              Agent scans the market each morning and auto-executes paper trades.
+              Disable to pause all autonomous activity without clearing settings.
+            </span>
+          </span>
+        </label>
+        <Field
+          label="Agent daily capital limit"
+          hint="Max dollars the agent may deploy in paper trades per trading day. Resets at midnight."
+          name="agent_daily_capital_limit"
+          defaultValue={initial.agent_daily_capital_limit}
+          step="any"
+          min={0}
+          suffix="$"
+        />
+      </div>
 
       {state.error ? (
         <div

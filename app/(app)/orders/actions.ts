@@ -2,7 +2,8 @@
 
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
-import { submitPaperOrder, submitParamsSchema } from "@/lib/broker/paper";
+import { submitParamsSchema } from "@/lib/broker/paper";
+import { getBrokerAdapter } from "@/lib/broker";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView } from "@/lib/portfolio";
@@ -35,8 +36,16 @@ export async function submitOrder(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "Not configured" };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in" };
+
   try {
-    const order = await submitPaperOrder(parsed.data);
+    const adapter = await getBrokerAdapter(user.id);
+    const order = await adapter.submitOrder(parsed.data);
     revalidatePath("/orders");
     revalidatePath("/portfolio");
     return { orderId: order.id };
@@ -195,9 +204,10 @@ export async function submitTrade(
     return { error: `Failed to save checklist: ${checklistError.message}` };
   }
 
-  // Submit paper order
+  // Submit order via broker adapter
   try {
-    const order = await submitPaperOrder({
+    const adapter = await getBrokerAdapter(user.id);
+    const order = await adapter.submitOrder({
       ticker: parsed.data.ticker,
       side: parsed.data.side,
       qty: parsed.data.qty,

@@ -1,7 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Mirror of public.profiles (post-M3 migration). Kept hand-typed for now;
+// Mirror of public.profiles (post-M13 migration). Kept hand-typed for now;
 // will be replaced by generated types after the schema stabilises.
 export type Profile = {
   user_id: string;
@@ -9,6 +9,11 @@ export type Profile = {
   max_risk_per_trade_pct: number;
   daily_loss_limit_pct: number;
   ai_token_budget_monthly: number;
+  // M13: broker abstraction + agent config
+  broker_mode: "paper" | "live";
+  real_money_unlocked: boolean;
+  agent_enabled: boolean;
+  agent_daily_capital_limit: number;
   created_at: string;
   updated_at: string;
 };
@@ -18,6 +23,10 @@ export const DEFAULT_PROFILE = {
   max_risk_per_trade_pct: 1,
   daily_loss_limit_pct: 3,
   ai_token_budget_monthly: 100000,
+  broker_mode: "paper" as const,
+  real_money_unlocked: false,
+  agent_enabled: false,
+  agent_daily_capital_limit: 500,
 } as const;
 
 export type UserAndProfile = {
@@ -62,4 +71,6 @@ export type ProfileUpdate = {
   max_risk_per_trade_pct: number;
   daily_loss_limit_pct: number;
   ai_token_budget_monthly: number;
+  agent_enabled: boolean;
+  agent_daily_capital_limit: number;
 };
