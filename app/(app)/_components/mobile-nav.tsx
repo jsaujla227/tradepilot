@@ -16,6 +16,7 @@ const NAV: NavItem[] = [
   { href: "/risk", label: "Risk" },
   { href: "/journal", label: "Journal" },
   { href: "/ai", label: "AI" },
+  { href: "/admin", label: "Admin" },
 ];
 
 export function MobileNav({ email }: { email: string | null }) {

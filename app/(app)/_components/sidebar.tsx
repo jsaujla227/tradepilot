@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { href: "/risk", label: "Risk", milestone: null },
   { href: "/journal", label: "Journal", milestone: "M9" },
   { href: "/ai", label: "AI", milestone: "M10" },
+  { href: "/admin", label: "Admin", milestone: null },
 ];
 
 export function Sidebar({ email }: { email: string | null }) {
