@@ -22,7 +22,7 @@ export default async function PortfolioPage() {
 
   const description = holdingsView.quotes_attempted
     ? "Live prices refresh every 60 seconds. Open P/L is market value minus cost basis."
-    : "Set ALPACA_API_KEY_ID + ALPACA_API_SECRET_KEY to unlock live prices and open P/L.";
+    : "Set FINNHUB_API_KEY to unlock live prices and open P/L.";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 md:py-14 space-y-8">

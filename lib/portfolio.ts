@@ -1,6 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getQuotesMap, type Quote } from "@/lib/alpaca/data";
+import { getQuotesMap, type Quote } from "@/lib/finnhub/data";
 
 export type Side = "buy" | "sell";
 export type TxSource = "manual" | "csv" | "alpaca";
@@ -61,15 +61,13 @@ export async function getHoldings(): Promise<Holding[]> {
   }));
 }
 
-function hasAlpacaCreds(): boolean {
-  return Boolean(
-    process.env.ALPACA_API_KEY_ID && process.env.ALPACA_API_SECRET_KEY,
-  );
+function hasMarketDataCreds(): boolean {
+  return Boolean(process.env.FINNHUB_API_KEY);
 }
 
 /**
- * Wraps `getHoldings()` with live quotes. When Alpaca creds are missing the
- * holdings are returned with `price: null` so the UI gracefully degrades.
+ * Wraps `getHoldings()` with live quotes. When the data-vendor key is missing
+ * the holdings are returned with `price: null` so the UI gracefully degrades.
  * Individual quote failures are tolerated — the row keeps `price: null`
  * rather than dropping out.
  */
@@ -77,7 +75,7 @@ export async function getHoldingsView(): Promise<HoldingsView> {
   const holdings = await getHoldings();
   const total_cost_basis = holdings.reduce((sum, h) => sum + h.cost_basis, 0);
 
-  if (holdings.length === 0 || !hasAlpacaCreds()) {
+  if (holdings.length === 0 || !hasMarketDataCreds()) {
     return {
       holdings: holdings.map((h) => ({
         ...h,

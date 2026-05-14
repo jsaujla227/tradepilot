@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { AlpacaDataError, getQuote } from "@/lib/alpaca/data";
+import { FinnhubDataError, getQuote } from "@/lib/finnhub/data";
 
 // Route-layer cache headers: `no-store` so the browser/CDN never short-circuits.
 // The 60s Upstash cache lives inside getQuote() — that's the only layer that
@@ -39,13 +39,15 @@ export async function GET(
       },
     );
   } catch (err) {
-    if (err instanceof AlpacaDataError) {
+    if (err instanceof FinnhubDataError) {
       const status =
         err.code === "invalid-ticker"
           ? 400
-          : err.code === "missing-credentials"
-            ? 500
-            : (err.status ?? 502);
+          : err.code === "unknown-ticker"
+            ? 404
+            : err.code === "missing-credentials"
+              ? 500
+              : (err.status ?? 502);
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status },

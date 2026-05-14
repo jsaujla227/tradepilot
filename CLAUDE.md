@@ -36,8 +36,8 @@ The full small-batch build plan lives at `~/.claude/plans/tradepilot-build-rosy-
 | UI | Tailwind v4 + shadcn/ui (zinc-950 dark cockpit) |
 | DB + Auth | Supabase (Postgres + Auth + RLS) |
 | Cache | Upstash Redis (Vercel Marketplace) |
-| Paper trading | Alpaca Trading API (IEX quotes + `trade_updates` websocket) |
-| Market data | Alpaca only (no Finnhub) — sector tagged manually per ticker |
+| Paper trading | Stubbed in-app (orders fill synchronously at last cached quote; no external broker) — Alpaca/IBKR not viable for the user's region (Canada). See `~/.claude/plans/` and project memory for the pivot rationale. |
+| Market data | Finnhub free tier for quotes (60s cache via Upstash); bars vendor TBD in M8. Sector tagged manually per ticker. |
 | AI | Anthropic Claude (Sonnet 4.6 / Opus 4.7) |
 | Forms | react-hook-form + Zod |
 | Client data | TanStack Query (for polled reads); Server Actions for mutations |
@@ -60,7 +60,8 @@ components/              UI components
 lib/                     pure libs + integrations
   risk/                  M2: positionSize, rMultiple, lossScenarios, etc.
   scoring/               M8: trend, volatility, R-multiple, liquidity
-  alpaca/                M5/M6: data + trade clients
+  finnhub/               M5: quote client (Zod-validated, vendor-neutral Quote shape)
+  broker/                M6: stubbed paper broker (no external trade routing)
   supabase/              M3: server, browser, admin clients
   utils.ts               cn() helper
 scripts/                 one-off scripts (admin context only)
