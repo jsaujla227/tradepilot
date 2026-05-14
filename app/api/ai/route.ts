@@ -86,13 +86,15 @@ const bodySchema = z.object({
 
 // Schema mirror of the tool input for runtime validation. Keep in sync with
 // the `record_assessment` tool definition below.
+// Length limits are hints in the tool schema; the model doesn't always
+// honour them exactly, so we only validate structure here, not length.
 const assessmentSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]),
-  primary_catalyst: z.string().min(1).max(80),
-  primary_risk: z.string().min(1).max(80),
-  exit_triggers: z.array(z.string().min(1).max(80)).min(2).max(4),
-  holding_period_days: z.number().int().min(1).max(365),
-  reasoning: z.string().min(1).max(300),
+  primary_catalyst: z.string().min(1),
+  primary_risk: z.string().min(1),
+  exit_triggers: z.array(z.string().min(1)).min(2).max(4),
+  holding_period_days: z.coerce.number().int().min(1).max(365),
+  reasoning: z.string().min(1),
 });
 
 const RECORD_ASSESSMENT_TOOL = {
