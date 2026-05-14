@@ -89,6 +89,8 @@ export type Quote = {
   ticker: string;
   price: number;
   prevClose: number | null;
+  high: number | null;
+  low: number | null;
   asOf: string;
 };
 
@@ -117,6 +119,8 @@ async function fetchQuote(ticker: string): Promise<Quote> {
     ticker,
     price: c,
     prevClose: pc ?? null,
+    high: parsed.data.h ?? null,
+    low: parsed.data.l ?? null,
     asOf: new Date(t * 1000).toISOString(),
   };
 }
