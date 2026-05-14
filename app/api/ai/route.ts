@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { z } from "zod";
 
@@ -65,9 +65,9 @@ OUTPUT FORMAT:
 - Bullet points are fine for lists of 3+ items.
 - End every response with the disclaimer on its own line, separated by a blank line.`;
 
-// Pricing per million tokens (May 2026 rates)
+// Bedrock on-demand pricing per million tokens (us-west-2, Claude 3.5 Sonnet v2)
 const PRICING = {
-  "claude-sonnet-4-6": { input: 3.0, output: 15.0, cacheRead: 0.3, cacheCreation: 3.75 },
+  "us.anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0, cacheRead: 0.3, cacheCreation: 3.75 },
 } as const;
 
 function calcCost(
@@ -138,8 +138,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const model = "claude-sonnet-4-6";
+  const anthropic = new AnthropicBedrock({
+    awsRegion: process.env.AWS_REGION ?? "us-west-2",
+  });
+  const model = "us.anthropic.claude-3-5-sonnet-20241022-v2:0";
 
   const stream = anthropic.messages.stream({
     model,

@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 // Monthly deep journal review cron — requires Authorization: Bearer ${CRON_SECRET}
-// Scheduled via Vercel Cron (vercel.json). Model: claude-opus-4-7.
+// Scheduled via Vercel Cron (vercel.json). Model: Claude 3 Opus via Bedrock.
 
 const CRON_SYSTEM_PROMPT = `You are the AI helper inside TradePilot performing a monthly journal review. Your job is to analyze the user's last 30 days of closed trade reviews and surface actionable patterns. You are NOT a financial advisor.
 
@@ -26,7 +26,7 @@ function calcOpusCost(
   cacheReadTokens: number,
   cacheCreationTokens: number,
 ): number {
-  // claude-opus-4-7 pricing per million tokens
+  // Claude 3 Opus on Bedrock (us-west-2) pricing per million tokens
   return (
     (inputTokens * 15.0 +
       outputTokens * 75.0 +
@@ -56,8 +56,10 @@ export async function GET(req: NextRequest) {
     return new Response("Failed to fetch profiles", { status: 500 });
   }
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const model = "claude-opus-4-7";
+  const anthropic = new AnthropicBedrock({
+    awsRegion: process.env.AWS_REGION ?? "us-west-2",
+  });
+  const model = "us.anthropic.claude-3-opus-20240229-v1:0";
   const results: { userId: string; status: string; tokens?: number }[] = [];
 
   for (const { user_id } of profiles) {

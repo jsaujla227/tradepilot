@@ -42,7 +42,9 @@ cp .env.example .env.local
 | `UPSTASH_REDIS_REST_URL` | Upstash console or Vercel Marketplace |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash console |
 | `FINNHUB_API_KEY` | finnhub.io free account |
-| `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `AWS_ACCESS_KEY_ID` | IAM user with `AmazonBedrockFullAccess` |
+| `AWS_SECRET_ACCESS_KEY` | IAM user credentials |
+| `AWS_REGION` | `us-west-2` (your Bedrock region) |
 | `CRON_SECRET` | `openssl rand -hex 32` |
 
 ### 3. Supabase migrations
