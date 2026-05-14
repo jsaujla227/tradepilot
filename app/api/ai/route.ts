@@ -25,11 +25,12 @@ CORE RULES — follow these on every response:
 7. TRANSPARENCY: The user can see your model name, the exact data you were given, and the token cost of this response. Be honest about uncertainty. If you are not sure, say so.
 
 WHEN EXPLAINING A SCORE:
-- Name each input (trend, volatility, R-multiple, liquidity) and its weighted contribution.
+- Name each input (trend, volatility, R-multiple, liquidity, event risk) and its weighted contribution.
 - Show the math where possible. Example: "Day range 2.1% of price → volatility score 0.58 (target: low day range = stable = high score)."
 - Identify the weakest scoring input and explain what would need to change for it to improve.
 - Close with one concrete question the user should ask themselves about this setup.
-- Scoring weights for reference: trend 30%, volatility 25%, R-multiple 30%, liquidity 15%.
+- Watchlist scoring weights: trend 25%, volatility 20%, R-multiple 25%, liquidity 10%, event risk 20%.
+- Scanner momentum weights: trend 45%, volatility 35%, event risk 20%.
 
 WHEN EXPLAINING A RISK WARNING:
 - State the rule that triggered. Example: "AAPL is 31% of total portfolio value, above the 25% concentration threshold."
@@ -51,27 +52,101 @@ WHEN REVIEWING JOURNAL ENTRIES (monthly deep review — Opus 4.7 mode):
 - Give 2–3 specific, actionable observations grounded in the actual review text provided. Quote or paraphrase the user's own words where relevant.
 - No generic trading advice. Everything must reference the actual journal data in the context.
 
+WHEN ASKED FOR A STRUCTURED ASSESSMENT (tool-use mode):
+- A "record_assessment" tool will be available. Always call it exactly once with the six required fields.
+- "confidence" is the strength of the setup given the data shown — low/medium/high. Be conservative; default to low when key data is missing.
+- "primary_catalyst" names the single most likely driver of price movement. Be concrete (earnings beat, breakout from resistance, sector rotation).
+- "primary_risk" names the single most likely failure mode. Be concrete (earnings miss, broader market drawdown, support break).
+- "exit_triggers" are 2–4 named conditions that should force a re-evaluation. Use price levels, time-based stops, or news events. Each ≤80 chars.
+- "holding_period_days" is your suggested look-out window, integer 1–365.
+- "reasoning" is a brief ≤300-char explanation, grounded in the provided data. Acknowledge missing data when relevant.
+- Never use banned vocabulary inside the tool call either — the same rules apply to tool inputs.
+
 CONTEXT ABOUT THE APP:
 - TradePilot is a private cockpit. All trades are paper trades. No real money involved.
 - Risk engine formulas: positionSize = (accountSize × riskPct / 100) / (entry − stop); rMultiple = (target − entry) / (entry − stop); circuit breaker fires when daily loss exceeds dailyLossLimitPct of account size.
-- Scoring engine inputs and weights: trend (day momentum vs prevClose, 30%), volatility (day high−low range / price, inverted, 25%), R-multiple (|target−entry| / |entry−stop| / 3, capped 0–1, 30%), liquidity (fixed 0.5 on Finnhub free tier — bars unavailable, 15%). Total score = weighted sum × 100, range 0–100.
+- Scoring engine inputs and weights: trend (day momentum vs prevClose), volatility (day high−low range / price, inverted), R-multiple (|target−entry| / |entry−stop| / 3, capped 0–1), liquidity (fixed 0.5 on Finnhub free tier — bars unavailable), event risk (days until next earnings; ≤3 → 0, ≤5 → 0.5, >5 → 1). Watchlist composite = 25/20/25/10/20 weighted sum × 100; scanner momentum = 45/35/20.
 - Every score input has a "Why?" inline expansion. Your explanations should match or exceed that level of detail.
 - Disclaimer footer appears on every app page: "Educational and decision-support only. Not financial advice. Markets involve risk."
 - The user configured their own account size, max risk per trade %, and daily loss limit % in Settings. Always frame risk numbers relative to those user-set parameters — never against abstract benchmarks.
-- Finnhub free tier is the market data source. Only quote fields (price, prevClose, high, low) are available. OHLC bars and volume are not available. Liquidity score is therefore always 0.5 (neutral placeholder).
+- Finnhub free tier is the market data source. Quote fields (price, prevClose, high, low), earnings calendar, company news, and analyst recommendations are available. OHLC bars and volume are not. Liquidity score is therefore always 0.5 (neutral placeholder).
 
-OUTPUT FORMAT:
+OUTPUT FORMAT (free-text mode):
 - Start directly with the explanation. No preamble, no greeting.
 - Use plain prose with short paragraphs.
 - If showing math, use inline notation. Example: "R = ($18.50 − $15.00) / ($15.00 − $13.50) = 2.33"
 - Bullet points are fine for lists of 3+ items.
 - End every response with the disclaimer on its own line, separated by a blank line.`;
 
-
 const bodySchema = z.object({
   prompt: z.string().min(1).max(2000),
   dataProvided: z.record(z.string(), z.unknown()).default({}),
+  mode: z.enum(["explain", "assess"]).default("explain"),
 });
+
+// Schema mirror of the tool input for runtime validation. Keep in sync with
+// the `record_assessment` tool definition below.
+const assessmentSchema = z.object({
+  confidence: z.enum(["low", "medium", "high"]),
+  primary_catalyst: z.string().min(1).max(80),
+  primary_risk: z.string().min(1).max(80),
+  exit_triggers: z.array(z.string().min(1).max(80)).min(2).max(4),
+  holding_period_days: z.number().int().min(1).max(365),
+  reasoning: z.string().min(1).max(300),
+});
+
+const RECORD_ASSESSMENT_TOOL = {
+  name: "record_assessment",
+  description:
+    "Record a structured assessment for the ticker or position described in the user message. Call exactly once.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      confidence: {
+        type: "string",
+        enum: ["low", "medium", "high"],
+        description: "Strength of the setup given the available data.",
+      },
+      primary_catalyst: {
+        type: "string",
+        maxLength: 80,
+        description: "Single most likely driver of price movement.",
+      },
+      primary_risk: {
+        type: "string",
+        maxLength: 80,
+        description: "Single most likely failure mode.",
+      },
+      exit_triggers: {
+        type: "array",
+        items: { type: "string", maxLength: 80 },
+        minItems: 2,
+        maxItems: 4,
+        description:
+          "Named conditions that should force a re-evaluation (price levels, time stops, news events).",
+      },
+      holding_period_days: {
+        type: "integer",
+        minimum: 1,
+        maximum: 365,
+        description: "Suggested look-out window in days.",
+      },
+      reasoning: {
+        type: "string",
+        maxLength: 300,
+        description: "Brief explanation grounded in the provided data.",
+      },
+    },
+    required: [
+      "confidence",
+      "primary_catalyst",
+      "primary_risk",
+      "exit_triggers",
+      "holding_period_days",
+      "reasoning",
+    ] as string[],
+  },
+};
 
 export async function POST(req: NextRequest) {
   const supabase = await createSupabaseServerClient();
@@ -86,7 +161,7 @@ export async function POST(req: NextRequest) {
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return new Response("Invalid request", { status: 400 });
 
-  const { prompt, dataProvided } = parsed.data;
+  const { prompt, dataProvided, mode } = parsed.data;
 
   // Monthly budget check
   const { data: profileRow } = await supabase
@@ -137,6 +212,94 @@ export async function POST(req: NextRequest) {
   });
   const model = modelId;
 
+  const userMessage = `Context data:\n${JSON.stringify(dataProvided, null, 2)}\n\n${prompt}`;
+
+  if (mode === "assess") {
+    try {
+      const response = await anthropic.messages.create({
+        model,
+        max_tokens: 1024,
+        system: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        tools: [RECORD_ASSESSMENT_TOOL],
+        tool_choice: { type: "tool", name: RECORD_ASSESSMENT_TOOL.name },
+        messages: [{ role: "user", content: userMessage }],
+      });
+
+      const toolUse = response.content.find(
+        (b): b is Extract<typeof b, { type: "tool_use" }> => b.type === "tool_use",
+      );
+      if (!toolUse) {
+        return new Response(
+          JSON.stringify({ error: "Model did not return a structured assessment" }),
+          { status: 502, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const validated = assessmentSchema.safeParse(toolUse.input);
+      if (!validated.success) {
+        return new Response(
+          JSON.stringify({
+            error: "Model returned invalid assessment shape",
+            issues: validated.error.issues,
+          }),
+          { status: 502, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const u = response.usage as unknown as Record<string, number>;
+      const inputTokens = u.input_tokens ?? 0;
+      const outputTokens = u.output_tokens ?? 0;
+      const cacheReadInputTokens = u.cache_read_input_tokens ?? 0;
+      const cacheCreationInputTokens = u.cache_creation_input_tokens ?? 0;
+
+      const costUsd = calcCost(
+        inputTokens,
+        outputTokens,
+        cacheReadInputTokens,
+        cacheCreationInputTokens,
+      );
+
+      await supabase.from("ai_notes").insert({
+        user_id: user.id,
+        prompt,
+        response: JSON.stringify(validated.data),
+        model,
+        data_provided: dataProvided,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_read_input_tokens: cacheReadInputTokens,
+        cache_creation_input_tokens: cacheCreationInputTokens,
+        cost_usd: costUsd,
+      });
+
+      return new Response(
+        JSON.stringify({
+          mode: "assess",
+          assessment: validated.data,
+          usage: {
+            inputTokens,
+            outputTokens,
+            cacheReadInputTokens,
+            cacheCreationInputTokens,
+            costUsd,
+            model,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    } finally {
+      await releaseLock(lockKey);
+    }
+  }
+
+  // -- Explain (streaming text) mode -----------------------------------------
+
   const stream = anthropic.messages.stream({
     model,
     max_tokens: 1024,
@@ -147,12 +310,7 @@ export async function POST(req: NextRequest) {
         cache_control: { type: "ephemeral" },
       },
     ],
-    messages: [
-      {
-        role: "user",
-        content: `Context data:\n${JSON.stringify(dataProvided, null, 2)}\n\n${prompt}`,
-      },
-    ],
+    messages: [{ role: "user", content: userMessage }],
   });
 
   const encoder = new TextEncoder();

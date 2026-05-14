@@ -19,6 +19,7 @@ export type WatchlistScore = {
   volatility: ScoreInput;
   rMultiple: ScoreInput;
   liquidity: ScoreInput;
+  eventRisk: ScoreInput;
 };
 
 export type ScoreWatchlistItemInput = {
@@ -29,12 +30,27 @@ export type ScoreWatchlistItemInput = {
   targetEntry: number | null;
   targetStop: number | null;
   targetPrice: number | null;
+  /** Days until next scheduled earnings; null if unknown or none in window. */
+  daysToEarnings: number | null;
 };
 
-// Weights must sum to 1.
-const W = { trend: 0.30, volatility: 0.25, rMultiple: 0.30, liquidity: 0.15 } as const;
+// Watchlist weights — must sum to 1.
+const W_WATCHLIST = {
+  trend: 0.25,
+  volatility: 0.20,
+  rMultiple: 0.25,
+  liquidity: 0.10,
+  eventRisk: 0.20,
+} as const;
 
-// -- Trend (30%) -----------------------------------------------------------
+// Scanner momentum weights — no R-multiple or liquidity (no setup defined).
+const W_MOMENTUM = {
+  trend: 0.45,
+  volatility: 0.35,
+  eventRisk: 0.20,
+} as const;
+
+// -- Trend (watchlist 25%, momentum 45%) ------------------------------------
 // Day momentum clipped to ±3 %. Positive = better.
 // +3 % → 1.0  |  0 % → 0.5  |  −3 % → 0.0
 function scoreTrend(price: number, prevClose: number | null): ScoreInput {
@@ -60,7 +76,7 @@ function scoreTrend(price: number, prevClose: number | null): ScoreInput {
   };
 }
 
-// -- Volatility (25%) ------------------------------------------------------
+// -- Volatility (watchlist 20%, momentum 35%) -------------------------------
 // Day range (high − low) / price. Smaller range = calmer = higher score.
 // 0 % range → 1.0  |  ≥5 % range → 0.0
 function scoreVolatility(
@@ -89,7 +105,7 @@ function scoreVolatility(
   };
 }
 
-// -- R-multiple (30%) ------------------------------------------------------
+// -- R-multiple (watchlist 25%) ---------------------------------------------
 // Planned R = |target − entry| / |entry − stop|.
 // 0R → 0.0  |  3R → 1.0  (capped)
 function scoreRMultiple(
@@ -137,7 +153,7 @@ function scoreRMultiple(
   };
 }
 
-// -- Liquidity (15%) -------------------------------------------------------
+// -- Liquidity (watchlist 10%) ----------------------------------------------
 // Requires daily bars (avg dollar volume). Not available on Finnhub free tier.
 function scoreLiquidity(): ScoreInput {
   return {
@@ -149,7 +165,50 @@ function scoreLiquidity(): ScoreInput {
   };
 }
 
-// -- Composite -------------------------------------------------------------
+// -- Event risk (watchlist 20%, momentum 20%) -------------------------------
+// Distance to the next known earnings announcement. Closer = riskier.
+//   no known earnings within window → 0.5 neutral, dataAvailable false
+//   > 5 days  → 1.0 (clear)
+//   3 < d ≤ 5 → 0.5 (caution)
+//   0 ≤ d ≤ 3 → 0.0 (gap risk)
+function scoreEventRisk(daysToEarnings: number | null): ScoreInput {
+  if (daysToEarnings == null) {
+    return {
+      value: 0.5,
+      label: "Event risk",
+      rawLabel: "no earnings in next 30d",
+      why: "No earnings announcement found in the next 30 days. Score held at 0.5 (neutral) — known event risk only, doesn't cover macro events or unscheduled news.",
+      dataAvailable: false,
+    };
+  }
+  if (daysToEarnings > 5) {
+    return {
+      value: 1.0,
+      label: "Event risk",
+      rawLabel: `Earnings in ${daysToEarnings}d`,
+      why: `Next earnings is ${daysToEarnings} days away — outside the 5-day overnight-gap window. Scores 1.0 (clear).`,
+      dataAvailable: true,
+    };
+  }
+  if (daysToEarnings > 3) {
+    return {
+      value: 0.5,
+      label: "Event risk",
+      rawLabel: `Earnings in ${daysToEarnings}d`,
+      why: `Next earnings is ${daysToEarnings} days away — inside the 5-day caution window. Earnings can gap stops at the open. Scores 0.5 (caution).`,
+      dataAvailable: true,
+    };
+  }
+  return {
+    value: 0.0,
+    label: "Event risk",
+    rawLabel: `Earnings in ${daysToEarnings}d`,
+    why: `Next earnings is ${daysToEarnings} days away — inside the 3-day gap-risk window. An earnings move can open past your stop. Scores 0.0 (high risk).`,
+    dataAvailable: true,
+  };
+}
+
+// -- Composite (watchlist) --------------------------------------------------
 
 export function scoreWatchlistItem(
   input: ScoreWatchlistItemInput,
@@ -162,12 +221,14 @@ export function scoreWatchlistItem(
     input.targetPrice,
   );
   const liquidity = scoreLiquidity();
+  const eventRisk = scoreEventRisk(input.daysToEarnings);
 
   const total =
-    trend.value * W.trend +
-    volatility.value * W.volatility +
-    rMultiple.value * W.rMultiple +
-    liquidity.value * W.liquidity;
+    trend.value * W_WATCHLIST.trend +
+    volatility.value * W_WATCHLIST.volatility +
+    rMultiple.value * W_WATCHLIST.rMultiple +
+    liquidity.value * W_WATCHLIST.liquidity +
+    eventRisk.value * W_WATCHLIST.eventRisk;
 
   return {
     total: Math.round(total * 1000) / 10, // 0–100, 1 decimal
@@ -175,5 +236,58 @@ export function scoreWatchlistItem(
     volatility,
     rMultiple,
     liquidity,
+    eventRisk,
+  };
+}
+
+// -- Composite (scanner momentum) -------------------------------------------
+
+export type MomentumBreakdown = {
+  trend: { value: number; rawLabel: string; why: string };
+  volatility: { value: number; rawLabel: string; why: string };
+  eventRisk: { value: number; rawLabel: string; why: string };
+};
+
+export type ScoreMomentumInput = {
+  price: number;
+  prevClose: number | null;
+  high: number | null;
+  low: number | null;
+  daysToEarnings: number | null;
+};
+
+/**
+ * Lightweight momentum score for the daily scanner. No R-multiple / liquidity
+ * (the scanner has no user setup data). Identical trend/volatility/eventRisk
+ * math as the watchlist score so the two surfaces stay consistent.
+ */
+export function scoreMomentum(input: ScoreMomentumInput): {
+  momentum: number;
+  breakdown: MomentumBreakdown;
+} {
+  const trend = scoreTrend(input.price, input.prevClose);
+  const volatility = scoreVolatility(input.price, input.high, input.low);
+  const eventRisk = scoreEventRisk(input.daysToEarnings);
+
+  const raw =
+    trend.value * W_MOMENTUM.trend +
+    volatility.value * W_MOMENTUM.volatility +
+    eventRisk.value * W_MOMENTUM.eventRisk;
+
+  return {
+    momentum: Math.round(raw * 1000) / 10,
+    breakdown: {
+      trend: { value: trend.value, rawLabel: trend.rawLabel, why: trend.why },
+      volatility: {
+        value: volatility.value,
+        rawLabel: volatility.rawLabel,
+        why: volatility.why,
+      },
+      eventRisk: {
+        value: eventRisk.value,
+        rawLabel: eventRisk.rawLabel,
+        why: eventRisk.why,
+      },
+    },
   };
 }

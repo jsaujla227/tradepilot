@@ -150,10 +150,12 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
               <InputRow {...item.score.volatility} />
               <InputRow {...item.score.rMultiple} />
               <InputRow {...item.score.liquidity} />
+              <InputRow {...item.score.eventRisk} />
               <div className="pt-1 border-t border-border/30 mt-1">
                 <ExplainButton
-                  label="Explain this score"
-                  prompt={`Explain the watchlist score for ${item.ticker}. Break down each input and tell me what's driving the score up or down.`}
+                  label="Assess this setup"
+                  mode="assess"
+                  prompt={`Produce a structured assessment for ${item.ticker} using the score data provided. Confidence should reflect the score components together — be conservative when key inputs (R-multiple, event risk) are missing.`}
                   dataProvided={{
                     ticker: item.ticker,
                     sector: item.sector,
@@ -168,6 +170,7 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
                       volatility: item.score.volatility,
                       rMultiple: item.score.rMultiple,
                       liquidity: item.score.liquidity,
+                      eventRisk: item.score.eventRisk,
                     },
                   }}
                 />

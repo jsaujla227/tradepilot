@@ -43,7 +43,7 @@ function getApiKey(): string {
   return key;
 }
 
-async function finnhubFetch(path: string): Promise<unknown> {
+export async function finnhubFetch(path: string): Promise<unknown> {
   const key = getApiKey();
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: {

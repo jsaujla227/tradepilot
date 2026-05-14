@@ -21,6 +21,7 @@ import {
   submitTrade,
   type SubmitTradeState,
 } from "@/app/(app)/orders/actions";
+import { TickerContextPanel } from "@/components/ticker/ticker-context-panel";
 
 type Props = {
   accountSize: number;
@@ -37,6 +38,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
   const [state, formAction, pending] = useActionState(submitTrade, initial);
 
   // Controlled fields that drive live calculations
+  const [ticker, setTicker] = useState("");
   const [entry, setEntry] = useState("");
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
@@ -103,6 +105,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
   }, [state.orderId]);
 
   function resetForm() {
+    setTicker("");
     setEntry("");
     setStop("");
     setTarget("");
@@ -112,6 +115,15 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
     setRmOut(null);
     setLsOut(null);
   }
+
+  // Proposed notional (entry × qty) drives sector-exposure projection.
+  const proposedNotional = (() => {
+    const e = parseFloat(entry);
+    const q = parseFloat(qty);
+    const effectiveQty = q > 0 ? q : (psOut?.shares ?? 0);
+    if (e > 0 && effectiveQty > 0) return e * effectiveQty;
+    return null;
+  })();
 
   return (
     <Dialog
@@ -160,6 +172,8 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
                 placeholder="AAPL"
                 required
                 maxLength={12}
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value.toUpperCase())}
                 className={`${INPUT} font-mono uppercase`}
               />
             </div>
@@ -219,6 +233,14 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
               />
             </div>
           </div>
+
+          {/* Ticker context (earnings, news, analyst consensus, sector exposure) */}
+          {ticker && (
+            <TickerContextPanel
+              ticker={ticker}
+              proposedNotional={proposedNotional}
+            />
+          )}
 
           {/* Live risk panel */}
           {(psOut || rmOut || lsOut) && (

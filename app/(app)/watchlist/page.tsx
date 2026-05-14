@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getQuotesMap } from "@/lib/finnhub/data";
+import { getEarningsContext } from "@/lib/finnhub/context";
 import { scoreWatchlistItem } from "@/lib/scoring";
 import { type ScoredWatchlistItem, WatchlistTable } from "./_components/watchlist-table";
 import { AddWatchlistForm } from "./_components/add-watchlist-form";
@@ -36,13 +37,25 @@ export default async function WatchlistPage() {
     metaRows.map((r) => [r.ticker as string, r.sector as string | null]),
   );
 
-  // Fetch live quotes (Upstash 60 s cache)
+  // Fetch live quotes (Upstash 60 s cache) and cached earnings context.
+  // Earnings cache is warmed by the daily context-refresh cron, so this is
+  // essentially a Redis read for each ticker.
   const tickers = items.map((i) => i.ticker as string);
-  const quotesMap = tickers.length > 0 ? await getQuotesMap(tickers) : {};
+  const [quotesMap, earningsList] = await Promise.all([
+    tickers.length > 0
+      ? getQuotesMap(tickers)
+      : Promise.resolve({} as Awaited<ReturnType<typeof getQuotesMap>>),
+    Promise.all(tickers.map((t) => getEarningsContext(t))),
+  ]);
+  type Earnings = Awaited<ReturnType<typeof getEarningsContext>>;
+  const earningsMap = new Map<string, Earnings>(
+    tickers.map((t, i) => [t, earningsList[i] ?? null]),
+  );
 
   const scored: ScoredWatchlistItem[] = items.map((item) => {
     const ticker = item.ticker as string;
     const quote = quotesMap[ticker] ?? null;
+    const earnings = earningsMap.get(ticker) ?? null;
     const score = quote
       ? scoreWatchlistItem({
           price: quote.price,
@@ -55,6 +68,7 @@ export default async function WatchlistPage() {
             item.target_stop != null ? Number(item.target_stop) : null,
           targetPrice:
             item.target_price != null ? Number(item.target_price) : null,
+          daysToEarnings: earnings?.daysUntil ?? null,
         })
       : null;
 
@@ -80,8 +94,8 @@ export default async function WatchlistPage() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">My watchlist</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Score = trend ×30% + volatility ×25% + R-multiple ×30% + liquidity
-          ×15%. Click any input row to see the math.
+          Score = trend ×25% + volatility ×20% + R-multiple ×25% + liquidity
+          ×10% + event risk ×20%. Click any input row to see the math.
         </p>
       </div>
 

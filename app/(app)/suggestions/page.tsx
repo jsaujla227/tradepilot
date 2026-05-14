@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AddToWatchlistButton } from "./_components/add-to-watchlist-button";
+import { ExplainButton } from "@/components/ai/explain-button";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Suggestions · TradePilot" };
@@ -12,6 +13,7 @@ type ScanRow = {
   breakdown: {
     trend: { value: number; rawLabel: string };
     volatility: { value: number; rawLabel: string };
+    eventRisk?: { value: number; rawLabel: string };
   };
 };
 
@@ -64,8 +66,10 @@ export default async function SuggestionsPage() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Suggestions</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Top S&amp;P 500 tickers by today&apos;s momentum score — trend (55%) + volatility (45%).
-          Scan runs automatically at 9:35 AM ET on weekdays.
+          Top S&amp;P 500 tickers by today&apos;s momentum score — trend (45%) +
+          volatility (35%) + event risk (20%). Scan runs automatically at
+          9:35 AM ET on weekdays; earnings within 3 days drag the score down
+          to avoid overnight-gap exposure.
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Scores reflect today&apos;s price action only. Set up entry / stop / target in
@@ -92,6 +96,7 @@ export default async function SuggestionsPage() {
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Momentum</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Trend</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Volatility</th>
+                <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground">Earnings</th>
                 <th className="px-4 py-2.5 text-right text-xs font-medium text-muted-foreground w-32"></th>
               </tr>
             </thead>
@@ -122,12 +127,42 @@ export default async function SuggestionsPage() {
                     <td className="px-4 py-3 text-right text-xs text-muted-foreground tabular-nums">
                       {row.breakdown?.volatility?.rawLabel ?? "—"}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      {onWatchlist ? (
-                        <span className="text-[11px] text-muted-foreground">On watchlist</span>
+                    <td className="px-4 py-3 text-right text-xs tabular-nums">
+                      {row.breakdown?.eventRisk ? (
+                        <span
+                          className={
+                            row.breakdown.eventRisk.value === 0
+                              ? "text-red-400"
+                              : row.breakdown.eventRisk.value < 1
+                                ? "text-yellow-400"
+                                : "text-muted-foreground"
+                          }
+                        >
+                          {row.breakdown.eventRisk.rawLabel}
+                        </span>
                       ) : (
-                        <AddToWatchlistButton ticker={row.ticker} />
+                        <span className="text-muted-foreground">—</span>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-right space-y-1">
+                      <div>
+                        {onWatchlist ? (
+                          <span className="text-[11px] text-muted-foreground">On watchlist</span>
+                        ) : (
+                          <AddToWatchlistButton ticker={row.ticker} />
+                        )}
+                      </div>
+                      <ExplainButton
+                        label="Assess"
+                        mode="assess"
+                        prompt={`Produce a structured assessment for ${row.ticker} based on today's momentum breakdown. Be conservative about confidence — this is a scanner result, no user-defined entry/stop/target.`}
+                        dataProvided={{
+                          ticker: row.ticker,
+                          momentum: row.momentum,
+                          quote: row.quote,
+                          breakdown: row.breakdown,
+                        }}
+                      />
                     </td>
                   </tr>
                 );

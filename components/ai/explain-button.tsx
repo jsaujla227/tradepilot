@@ -11,19 +11,32 @@ type Usage = {
   model: string;
 };
 
+type Assessment = {
+  confidence: "low" | "medium" | "high";
+  primary_catalyst: string;
+  primary_risk: string;
+  exit_triggers: string[];
+  holding_period_days: number;
+  reasoning: string;
+};
+
 type State = "idle" | "streaming" | "done" | "error" | "budget";
+type Mode = "explain" | "assess";
 
 export function ExplainButton({
   prompt,
   dataProvided,
   label = "Explain",
+  mode = "explain",
 }: {
   prompt: string;
   dataProvided: Record<string, unknown>;
   label?: string;
+  mode?: Mode;
 }) {
   const [state, setState] = useState<State>("idle");
   const [text, setText] = useState("");
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [showData, setShowData] = useState(false);
@@ -31,6 +44,7 @@ export function ExplainButton({
   async function run() {
     setState("streaming");
     setText("");
+    setAssessment(null);
     setUsage(null);
     setErrorMsg("");
     setShowData(false);
@@ -39,7 +53,7 @@ export function ExplainButton({
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, dataProvided }),
+        body: JSON.stringify({ prompt, dataProvided, mode }),
       });
 
       if (res.status === 429) {
@@ -47,9 +61,26 @@ export function ExplainButton({
         return;
       }
 
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setErrorMsg((data as { error?: string }).error ?? `Error ${res.status}`);
+        setState("error");
+        return;
+      }
+
+      if (mode === "assess") {
+        const data = (await res.json()) as {
+          assessment: Assessment;
+          usage: Usage;
+        };
+        setAssessment(data.assessment);
+        setUsage(data.usage);
+        setState("done");
+        return;
+      }
+
+      if (!res.body) {
+        setErrorMsg("No response body");
         setState("error");
         return;
       }
@@ -105,12 +136,24 @@ export function ExplainButton({
         </p>
       ) : (
         <>
-          <p className="leading-relaxed whitespace-pre-wrap text-foreground/85">
-            {text}
-            {state === "streaming" && (
-              <span className="animate-pulse text-muted-foreground">▌</span>
-            )}
-          </p>
+          {mode === "assess" && state === "streaming" && (
+            <p className="text-xs text-muted-foreground">
+              Generating structured assessment…
+            </p>
+          )}
+
+          {mode === "assess" && assessment && (
+            <AssessmentCard assessment={assessment} />
+          )}
+
+          {mode === "explain" && (
+            <p className="leading-relaxed whitespace-pre-wrap text-foreground/85">
+              {text}
+              {state === "streaming" && (
+                <span className="animate-pulse text-muted-foreground">▌</span>
+              )}
+            </p>
+          )}
 
           {state === "done" && usage && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/30 pt-2">
@@ -154,6 +197,66 @@ export function ExplainButton({
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+function AssessmentCard({ assessment }: { assessment: Assessment }) {
+  const confidenceColour =
+    assessment.confidence === "high"
+      ? "bg-green-500/15 text-green-300 border-green-500/30"
+      : assessment.confidence === "medium"
+        ? "bg-yellow-500/15 text-yellow-300 border-yellow-500/30"
+        : "bg-red-500/15 text-red-300 border-red-500/30";
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span
+          className={`rounded-md border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${confidenceColour}`}
+        >
+          {assessment.confidence} confidence
+        </span>
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          Hold ~{assessment.holding_period_days}d
+        </span>
+      </div>
+
+      <Field label="Primary catalyst" value={assessment.primary_catalyst} />
+      <Field label="Primary risk" value={assessment.primary_risk} />
+
+      <div className="space-y-1">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Exit triggers
+        </p>
+        <ul className="space-y-0.5 text-xs text-foreground/85">
+          {assessment.exit_triggers.map((t, i) => (
+            <li key={i} className="flex gap-2">
+              <span className="text-muted-foreground/60">·</span>
+              <span>{t}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Reasoning
+        </p>
+        <p className="text-xs leading-relaxed text-foreground/80">
+          {assessment.reasoning}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="text-xs text-foreground/85">{value}</p>
     </div>
   );
 }

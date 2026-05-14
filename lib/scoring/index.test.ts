@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreWatchlistItem } from "./index";
+import { scoreWatchlistItem, scoreMomentum } from "./index";
 
 // Helpers
 const base = {
@@ -10,6 +10,7 @@ const base = {
   targetEntry: null,
   targetStop: null,
   targetPrice: null,
+  daysToEarnings: null,
 } as const;
 
 describe("scoreWatchlistItem — trend", () => {
@@ -73,7 +74,6 @@ describe("scoreWatchlistItem — volatility", () => {
 
 describe("scoreWatchlistItem — R-multiple", () => {
   it("3R setup → rMultiple value 1.0", () => {
-    // entry=100, stop=90 → 1R=10; target=130 → plannedR=3
     const r = scoreWatchlistItem({
       ...base,
       targetEntry: 100,
@@ -85,7 +85,6 @@ describe("scoreWatchlistItem — R-multiple", () => {
   });
 
   it("1.5R setup → rMultiple value 0.5", () => {
-    // entry=100, stop=90 → 1R=10; target=115 → plannedR=1.5
     const r = scoreWatchlistItem({
       ...base,
       targetEntry: 100,
@@ -123,7 +122,6 @@ describe("scoreWatchlistItem — R-multiple", () => {
   });
 
   it("short setup (stop above entry) with target below entry → scores correctly", () => {
-    // short: entry=100, stop=110 → 1R=10; target=70 → plannedR=3
     const r = scoreWatchlistItem({
       ...base,
       targetEntry: 100,
@@ -135,7 +133,6 @@ describe("scoreWatchlistItem — R-multiple", () => {
   });
 
   it("long setup with target below entry → invalid, value 0, dataAvailable false", () => {
-    // long (stop < entry) but target below entry is wrong side
     const r = scoreWatchlistItem({
       ...base,
       targetEntry: 100,
@@ -147,7 +144,6 @@ describe("scoreWatchlistItem — R-multiple", () => {
   });
 
   it("short setup with target above entry → invalid, value 0, dataAvailable false", () => {
-    // short (stop > entry) but target above entry is wrong side
     const r = scoreWatchlistItem({
       ...base,
       targetEntry: 100,
@@ -167,14 +163,76 @@ describe("scoreWatchlistItem — liquidity", () => {
   });
 });
 
+describe("scoreWatchlistItem — eventRisk", () => {
+  it("null daysToEarnings → 0.5 neutral, dataAvailable false", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: null });
+    expect(r.eventRisk.value).toBe(0.5);
+    expect(r.eventRisk.dataAvailable).toBe(false);
+  });
+
+  it("more than 5 days out → 1.0 (clear)", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: 10 });
+    expect(r.eventRisk.value).toBe(1.0);
+    expect(r.eventRisk.dataAvailable).toBe(true);
+  });
+
+  it("exactly 5 days out → 0.5 (caution)", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: 5 });
+    expect(r.eventRisk.value).toBe(0.5);
+  });
+
+  it("4 days out → 0.5 (caution)", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: 4 });
+    expect(r.eventRisk.value).toBe(0.5);
+  });
+
+  it("3 days out → 0.0 (gap risk)", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: 3 });
+    expect(r.eventRisk.value).toBe(0.0);
+  });
+
+  it("0 days out (today) → 0.0 (gap risk)", () => {
+    const r = scoreWatchlistItem({ ...base, daysToEarnings: 0 });
+    expect(r.eventRisk.value).toBe(0.0);
+  });
+});
+
 describe("scoreWatchlistItem — total", () => {
-  it("all-neutral inputs → total ≈ 50", () => {
-    // trend=0.5, vol=0.5, rMultiple=0, liquidity=0.5
-    // 0.5*0.30 + 0.5*0.25 + 0*0.30 + 0.5*0.15 = 0.35 → 35
-    const r = scoreWatchlistItem({ ...base, prevClose: 100, high: 100, low: 100 });
-    // zero day range → vol=1.0; 0% momentum → trend=0.5; no R → 0; liq=0.5
-    // 0.5*0.30 + 1.0*0.25 + 0*0.30 + 0.5*0.15 = 0.15+0.25+0+0.075 = 0.475 → 47.5
+  it("all-neutral inputs (zero range, no R, no earnings) → total 47.5", () => {
+    // trend=0.5, vol=1.0, rMultiple=0, liquidity=0.5, eventRisk=0.5
+    // 0.5*0.25 + 1.0*0.20 + 0*0.25 + 0.5*0.10 + 0.5*0.20 = 0.475 → 47.5
+    const r = scoreWatchlistItem({
+      ...base,
+      prevClose: 100,
+      high: 100,
+      low: 100,
+    });
     expect(r.total).toBeCloseTo(47.5, 1);
+  });
+
+  it("near-earnings position scores meaningfully lower than safe one", () => {
+    const safe = scoreWatchlistItem({
+      price: 103,
+      prevClose: 100,
+      high: 103.5,
+      low: 102.5,
+      targetEntry: 100,
+      targetStop: 90,
+      targetPrice: 130,
+      daysToEarnings: 14,
+    });
+    const earningsWeek = scoreWatchlistItem({
+      price: 103,
+      prevClose: 100,
+      high: 103.5,
+      low: 102.5,
+      targetEntry: 100,
+      targetStop: 90,
+      targetPrice: 130,
+      daysToEarnings: 2,
+    });
+    // 20% weight × 1.0 difference = 20 points
+    expect(safe.total - earningsWeek.total).toBeCloseTo(20, 1);
   });
 
   it("scores visibly differ between a strong and weak setup", () => {
@@ -186,6 +244,7 @@ describe("scoreWatchlistItem — total", () => {
       targetEntry: 100,
       targetStop: 90,
       targetPrice: 130,
+      daysToEarnings: 14,
     });
     const weak = scoreWatchlistItem({
       price: 97,
@@ -195,6 +254,7 @@ describe("scoreWatchlistItem — total", () => {
       targetEntry: null,
       targetStop: null,
       targetPrice: null,
+      daysToEarnings: 2,
     });
     expect(strong.total).toBeGreaterThan(weak.total + 20);
   });
@@ -208,8 +268,56 @@ describe("scoreWatchlistItem — total", () => {
       targetEntry: 100,
       targetStop: 90,
       targetPrice: 160,
+      daysToEarnings: 30,
     });
     expect(r.total).toBeGreaterThanOrEqual(0);
     expect(r.total).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("scoreMomentum", () => {
+  it("all-neutral inputs (zero range, no earnings) → momentum 67.5", () => {
+    // trend=0.5, vol=1.0, eventRisk=0.5
+    // 0.5*0.45 + 1.0*0.35 + 0.5*0.20 = 0.225 + 0.35 + 0.10 = 0.675 → 67.5
+    const r = scoreMomentum({
+      price: 100,
+      prevClose: 100,
+      high: 100,
+      low: 100,
+      daysToEarnings: null,
+    });
+    expect(r.momentum).toBeCloseTo(67.5, 1);
+    expect(r.breakdown.trend.value).toBeCloseTo(0.5);
+    expect(r.breakdown.eventRisk.value).toBe(0.5);
+  });
+
+  it("earnings in 2 days drops momentum by 20 (eventRisk weight)", () => {
+    const clear = scoreMomentum({
+      price: 103,
+      prevClose: 100,
+      high: 103.5,
+      low: 102.5,
+      daysToEarnings: 14,
+    });
+    const risky = scoreMomentum({
+      price: 103,
+      prevClose: 100,
+      high: 103.5,
+      low: 102.5,
+      daysToEarnings: 2,
+    });
+    expect(clear.momentum - risky.momentum).toBeCloseTo(20, 1);
+  });
+
+  it("momentum is within 0–100", () => {
+    const r = scoreMomentum({
+      price: 106,
+      prevClose: 100,
+      high: 106,
+      low: 106,
+      daysToEarnings: 30,
+    });
+    expect(r.momentum).toBeGreaterThanOrEqual(0);
+    expect(r.momentum).toBeLessThanOrEqual(100);
   });
 });
