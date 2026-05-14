@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repo; the working tree can use the
+# platform-native line ending. Prevents CRLF noise on Windows commits.
+* text=auto eol=lf
+
+# Lockfiles are generated; treat as text but never merge.
+pnpm-lock.yaml -diff merge=ours linguist-generated=true
