@@ -3,15 +3,10 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { tickerSchema } from "@/lib/ticker";
 
 const addSchema = z.object({
-  ticker: z
-    .string()
-    .trim()
-    .min(1, "Ticker required")
-    .max(10, "Ticker too long")
-    .regex(/^[A-Za-z0-9.\-]+$/, "Invalid ticker characters")
-    .transform((s) => s.toUpperCase()),
+  ticker: tickerSchema,
   sector: z
     .string()
     .max(80)

@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { cached } from "@/lib/redis";
+import { TICKER_REGEX } from "@/lib/ticker";
 
 // Finnhub market-data client. Free tier covers US-stock /quote endpoint with
 // 60 calls/min — plenty for a single-user cockpit on a 60s cache. Historical
@@ -9,7 +10,7 @@ import { cached } from "@/lib/redis";
 
 const BASE_URL = "https://finnhub.io/api/v1";
 
-const TICKER_RE = /^[A-Z][A-Z0-9.-]{0,9}$/;
+const TICKER_RE = TICKER_REGEX;
 
 export class FinnhubDataError extends Error {
   readonly code: string;

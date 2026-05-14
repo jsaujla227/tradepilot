@@ -6,6 +6,7 @@ import { submitPaperOrder, submitParamsSchema } from "@/lib/broker/paper";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView } from "@/lib/portfolio";
+import { tickerSchema } from "@/lib/ticker";
 import {
   positionSize,
   rMultiple,
@@ -47,13 +48,7 @@ export async function submitOrder(
 // ── submitTrade (pre-trade checklist → circuit breaker → paper order) ─────────
 
 const submitTradeSchema = z.object({
-  ticker: z
-    .string()
-    .trim()
-    .min(1, "Ticker required")
-    .max(12, "Ticker too long")
-    .regex(/^[A-Za-z0-9.\-]+$/, "Invalid ticker characters")
-    .transform((s) => s.toUpperCase()),
+  ticker: tickerSchema,
   side: z.enum(["buy", "sell"]),
   entry: z.coerce.number().positive("Entry must be positive"),
   stop: z.coerce.number().positive("Stop must be positive"),
@@ -121,15 +116,29 @@ export async function submitTrade(
     profileRow?.daily_loss_limit_pct ?? DEFAULT_PROFILE.daily_loss_limit_pct,
   );
 
-  // Circuit breaker: open P/L vs daily loss limit.
-  // realizedToday uses 0 as a conservative proxy — open P/L is the primary signal.
-  const holdingsView = await getHoldingsView();
+  // Circuit breaker: sum today's realized P&L from closed positions + open P&L.
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const [holdingsView, { data: closedToday }] = await Promise.all([
+    getHoldingsView(),
+    supabase
+      .from("positions")
+      .select("realized_pnl")
+      .eq("is_closed", true)
+      .gte("closed_at", startOfDay.toISOString()),
+  ]);
+
   const openPnL = holdingsView.total_open_pnl ?? 0;
+  const realizedToday = (closedToday ?? []).reduce(
+    (sum, row) => sum + Number(row.realized_pnl ?? 0),
+    0,
+  );
 
   const cbResult = dailyLossBreached({
     accountSize,
     dailyLossLimitPct,
-    realizedToday: 0,
+    realizedToday,
     openPnL,
   });
 
