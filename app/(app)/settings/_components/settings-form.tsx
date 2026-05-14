@@ -82,7 +82,7 @@ export function SettingsForm({
         hint="Used as the default in /risk calculators and as a baseline for return tracking."
         name="account_size_initial"
         defaultValue={initial.account_size_initial}
-        step="1"
+        step="any"
         min={1}
         suffix="$"
       />
@@ -91,7 +91,7 @@ export function SettingsForm({
         hint="Cap on dollars-at-risk per trade as a % of account size. Drives position sizing."
         name="max_risk_per_trade_pct"
         defaultValue={initial.max_risk_per_trade_pct}
-        step="0.1"
+        step="any"
         min={0.01}
         suffix="%"
       />
@@ -100,7 +100,7 @@ export function SettingsForm({
         hint="Realized + open loss threshold that trips the circuit breaker (M7)."
         name="daily_loss_limit_pct"
         defaultValue={initial.daily_loss_limit_pct}
-        step="0.1"
+        step="any"
         min={0.01}
         suffix="%"
       />
@@ -109,7 +109,7 @@ export function SettingsForm({
         hint="Hard cap on Anthropic tokens per calendar month across chat + monthly review (M10)."
         name="ai_token_budget_monthly"
         defaultValue={initial.ai_token_budget_monthly}
-        step="1000"
+        step="1"
         min={0}
         suffix="tk"
       />
