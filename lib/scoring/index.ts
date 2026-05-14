@@ -114,6 +114,17 @@ function scoreRMultiple(
       dataAvailable: false,
     };
   }
+  const isLong = targetEntry > targetStop;
+  const validTarget = isLong ? targetPrice > targetEntry : targetPrice < targetEntry;
+  if (!validTarget) {
+    return {
+      value: 0,
+      label: "R-multiple",
+      rawLabel: "target on wrong side of entry",
+      why: `For a ${isLong ? "long" : "short"} setup (stop ${isLong ? "below" : "above"} entry), the target must be ${isLong ? "above" : "below"} entry. Current target ${targetPrice} is on the wrong side — setup is invalid.`,
+      dataAvailable: false,
+    };
+  }
   const r = Math.abs(targetEntry - targetStop);
   const plannedR = Math.abs(targetPrice - targetEntry) / r;
   const value = Math.max(0, Math.min(1, plannedR / 3));

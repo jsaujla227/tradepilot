@@ -121,6 +121,42 @@ describe("scoreWatchlistItem — R-multiple", () => {
     expect(r.rMultiple.value).toBe(0);
     expect(r.rMultiple.dataAvailable).toBe(false);
   });
+
+  it("short setup (stop above entry) with target below entry → scores correctly", () => {
+    // short: entry=100, stop=110 → 1R=10; target=70 → plannedR=3
+    const r = scoreWatchlistItem({
+      ...base,
+      targetEntry: 100,
+      targetStop: 110,
+      targetPrice: 70,
+    });
+    expect(r.rMultiple.value).toBeCloseTo(1.0);
+    expect(r.rMultiple.dataAvailable).toBe(true);
+  });
+
+  it("long setup with target below entry → invalid, value 0, dataAvailable false", () => {
+    // long (stop < entry) but target below entry is wrong side
+    const r = scoreWatchlistItem({
+      ...base,
+      targetEntry: 100,
+      targetStop: 90,
+      targetPrice: 80,
+    });
+    expect(r.rMultiple.value).toBe(0);
+    expect(r.rMultiple.dataAvailable).toBe(false);
+  });
+
+  it("short setup with target above entry → invalid, value 0, dataAvailable false", () => {
+    // short (stop > entry) but target above entry is wrong side
+    const r = scoreWatchlistItem({
+      ...base,
+      targetEntry: 100,
+      targetStop: 110,
+      targetPrice: 120,
+    });
+    expect(r.rMultiple.value).toBe(0);
+    expect(r.rMultiple.dataAvailable).toBe(false);
+  });
 });
 
 describe("scoreWatchlistItem — liquidity", () => {

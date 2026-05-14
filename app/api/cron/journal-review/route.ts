@@ -1,6 +1,8 @@
+import { timingSafeEqual } from "crypto";
 import { NextRequest } from "next/server";
 import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { calcCost } from "@/lib/ai/pricing";
 
 // Monthly deep journal review cron — requires Authorization: Bearer ${CRON_SECRET}
 // Scheduled via Vercel Cron (vercel.json). Model: Claude 3 Opus via Bedrock.
@@ -20,25 +22,21 @@ Structure your response as:
 4. THREE OBSERVATIONS: Specific, grounded in the actual review text. Quote or paraphrase the user's own words.
 5. ONE QUESTION: The most important question the user should sit with this month.`;
 
-function calcOpusCost(
-  inputTokens: number,
-  outputTokens: number,
-  cacheReadTokens: number,
-  cacheCreationTokens: number,
-): number {
-  // Claude 3 Opus on Bedrock (us-west-2) pricing per million tokens
-  return (
-    (inputTokens * 15.0 +
-      outputTokens * 75.0 +
-      cacheReadTokens * 1.5 +
-      cacheCreationTokens * 18.75) /
-    1_000_000
-  );
+function isValidCronAuth(header: string | null, secret: string): boolean {
+  if (!header) return false;
+  const expected = `Bearer ${secret}`;
+  try {
+    const a = Buffer.from(header);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || !isValidCronAuth(req.headers.get("authorization"), cronSecret)) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -131,15 +129,14 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      const costUsd = calcOpusCost(
+      const costUsd = calcCost(
         inputTokens,
         outputTokens,
         cacheReadInputTokens,
         cacheCreationInputTokens,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (admin.from("ai_notes") as any).insert({
+      await admin.from("ai_notes").insert({
         user_id,
         prompt,
         response: fullText,

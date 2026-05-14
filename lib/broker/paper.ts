@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { getQuote } from "@/lib/finnhub/data";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { tickerSchema } from "@/lib/ticker";
 
 // Stubbed in-app paper broker. Orders fill synchronously at the last cached
 // Finnhub quote. No external trade routing (Alpaca/IBKR not viable for Canada).
@@ -24,13 +25,7 @@ export type PaperOrder = {
 };
 
 export const submitParamsSchema = z.object({
-  ticker: z
-    .string()
-    .trim()
-    .min(1, "Ticker required")
-    .max(10, "Ticker too long")
-    .regex(/^[A-Za-z0-9.\-]+$/, "Invalid ticker characters")
-    .transform((s) => s.toUpperCase()),
+  ticker: tickerSchema,
   side: z.enum(["buy", "sell"]),
   qty: z.coerce.number().positive("Qty must be positive").max(1e9),
   note: z
@@ -90,47 +85,21 @@ export async function submitPaperOrder(params: SubmitParams): Promise<PaperOrder
 
   const filledAt = new Date().toISOString();
 
-  // Update order → filled
-  const { error: fillError } = await supabase
-    .from("orders")
-    .update({
-      status: "filled",
-      filled_price: fillPrice,
-      filled_qty: params.qty,
-      filled_at: filledAt,
-    })
-    .eq("id", order.id);
+  // Atomic fill: update order + insert transaction in one Postgres function
+  // so a mid-flight crash cannot leave an order "filled" with no transaction.
+  const { error: fillError } = await supabase.rpc("fill_paper_order", {
+    p_order_id:   order.id,
+    p_user_id:    user.id,
+    p_ticker:     params.ticker,
+    p_side:       params.side,
+    p_qty:        params.qty,
+    p_fill_price: fillPrice,
+    p_filled_at:  filledAt,
+  });
 
   if (fillError) {
     await supabase.from("orders").update({ status: "rejected" }).eq("id", order.id);
     throw new Error(`Failed to fill order: ${fillError.message}`);
-  }
-
-  // Insert transaction row linked to this order
-  const { error: txError } = await supabase.from("transactions").insert({
-    user_id: user.id,
-    ticker: params.ticker,
-    side: params.side,
-    qty: params.qty,
-    price: fillPrice,
-    fees: 0,
-    executed_at: filledAt,
-    source: "paper",
-    order_id: order.id,
-  });
-
-  if (txError) {
-    // Undo fill so the order doesn't appear filled with no transaction
-    await supabase
-      .from("orders")
-      .update({
-        status: "rejected",
-        filled_price: null,
-        filled_qty: null,
-        filled_at: null,
-      })
-      .eq("id", order.id);
-    throw new Error(`Failed to record transaction: ${txError.message}`);
   }
 
   return {

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
@@ -6,21 +7,29 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 // Writes one row per user to portfolio_snapshots with cost-basis positions_value
 // (live quotes are not fetched — market is closed at 23:00 UTC for most markets).
 
+function isValidCronAuth(header: string | null, secret: string): boolean {
+  if (!header) return false;
+  const expected = `Bearer ${secret}`;
+  try {
+    const a = Buffer.from(header);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || !isValidCronAuth(req.headers.get("authorization"), cronSecret)) {
     return new Response("Unauthorized", { status: 401 });
   }
 
   const admin = supabaseAdmin();
 
-  // Get all profiles for account_size_initial
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: profiles, error: profileErr } = await (admin.from("profiles") as any)
-    .select("user_id, account_size_initial") as {
-      data: { user_id: string; account_size_initial: number | null }[] | null;
-      error: { message: string } | null;
-    };
+  const { data: profiles, error: profileErr } = await admin
+    .from("profiles")
+    .select("user_id, account_size_initial");
 
   if (profileErr || !profiles) {
     return new Response("Failed to fetch profiles", { status: 500 });
@@ -33,13 +42,10 @@ export async function GET(req: NextRequest) {
     const userId = profile.user_id as string;
     const accountSize = (profile.account_size_initial as number | null) ?? 0;
 
-    // Compute open positions cost basis from transactions
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: txRows } = await (admin.from("transactions") as any)
+    const { data: txRows } = await admin
+      .from("transactions")
       .select("ticker, side, qty, price")
-      .eq("user_id", userId) as {
-        data: { ticker: string; side: string; qty: string; price: string }[] | null;
-      };
+      .eq("user_id", userId);
 
     // Aggregate net qty and cost basis per ticker
     const holdings: Record<string, { netQty: number; costBasis: number }> = {};
@@ -53,7 +59,6 @@ export async function GET(req: NextRequest) {
         holdings[ticker].netQty += qty;
         holdings[ticker].costBasis += qty * price;
       } else {
-        // Sell: reduce position. Reduce cost basis proportionally.
         const prev = holdings[ticker];
         const sellRatio = prev.netQty > 0 ? qty / prev.netQty : 0;
         holdings[ticker].netQty -= qty;
@@ -68,9 +73,7 @@ export async function GET(req: NextRequest) {
     const cash = Math.max(0, accountSize - positionsValue);
     const totalValue = cash + positionsValue;
 
-    // Upsert — unique on (user_id, snapshot_date)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: upsertErr } = await (admin.from("portfolio_snapshots") as any).upsert(
+    const { error: upsertErr } = await admin.from("portfolio_snapshots").upsert(
       {
         user_id: userId,
         snapshot_date: today,

@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { acquireLock, releaseLock } from "@/lib/redis";
+import { calcCost } from "@/lib/ai/pricing";
 import { z } from "zod";
 
 // System prompt must exceed 1024 tokens so Anthropic prompt caching triggers.
@@ -65,24 +67,6 @@ OUTPUT FORMAT:
 - Bullet points are fine for lists of 3+ items.
 - End every response with the disclaimer on its own line, separated by a blank line.`;
 
-// Bedrock pricing per million tokens — Claude Opus 4.6 rates
-const OPUS_PRICING = { input: 15.0, output: 75.0, cacheRead: 1.5, cacheCreation: 18.75 };
-
-function calcCost(
-  inputTokens: number,
-  outputTokens: number,
-  cacheReadTokens: number,
-  cacheCreationTokens: number,
-): number {
-  const p = OPUS_PRICING;
-  return (
-    (inputTokens * p.input +
-      outputTokens * p.output +
-      cacheReadTokens * p.cacheRead +
-      cacheCreationTokens * p.cacheCreation) /
-    1_000_000
-  );
-}
 
 const bodySchema = z.object({
   prompt: z.string().min(1).max(2000),
@@ -137,6 +121,16 @@ export async function POST(req: NextRequest) {
 
   const modelId = process.env.BEDROCK_MODEL_ID;
   if (!modelId) return new Response("BEDROCK_MODEL_ID not configured", { status: 503 });
+
+  // Prevent concurrent AI calls from the same user racing through the budget check.
+  const lockKey = `tp:ai-inflight:${user.id}`;
+  const locked = await acquireLock(lockKey, 120);
+  if (!locked) {
+    return new Response(
+      JSON.stringify({ error: "Another AI request is already in progress" }),
+      { status: 429, headers: { "Content-Type": "application/json" } },
+    );
+  }
 
   const anthropic = new AnthropicBedrock({
     awsRegion: process.env.AWS_REGION ?? "us-east-2",
@@ -225,6 +219,8 @@ export async function POST(req: NextRequest) {
         controller.close();
       } catch (err) {
         controller.error(err);
+      } finally {
+        await releaseLock(lockKey);
       }
     },
   });

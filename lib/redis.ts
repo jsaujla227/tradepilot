@@ -68,3 +68,29 @@ export async function cached<T>(
   await cacheSet(key, value, ttlSeconds);
   return { value, hit: false };
 }
+
+/**
+ * Acquire a TTL-bounded exclusive lock. Returns true if the lock was obtained,
+ * false if it was already held. Falls back to true (allow) on Redis errors so
+ * a cache outage never blocks the app.
+ */
+export async function acquireLock(key: string, ttlSeconds: number): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return true;
+  try {
+    const result = await redis.set(key, "1", { nx: true, ex: ttlSeconds });
+    return result === "OK";
+  } catch {
+    return true;
+  }
+}
+
+export async function releaseLock(key: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    await redis.del(key);
+  } catch {
+    // best-effort
+  }
+}

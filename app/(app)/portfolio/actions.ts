@@ -3,15 +3,10 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { tickerSchema } from "@/lib/ticker";
 
 const addTransactionSchema = z.object({
-  ticker: z
-    .string()
-    .trim()
-    .min(1, "Ticker required")
-    .max(12, "Ticker too long")
-    .regex(/^[A-Za-z0-9.\-]+$/, "Invalid ticker characters")
-    .transform((s) => s.toUpperCase()),
+  ticker: tickerSchema,
   side: z.enum(["buy", "sell"]),
   qty: z.coerce.number().positive("Qty must be positive").max(1e10),
   price: z.coerce.number().positive("Price must be positive").max(1e10),
