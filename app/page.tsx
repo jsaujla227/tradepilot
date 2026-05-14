@@ -1,4 +1,22 @@
-export default function LandingPage() {
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+// Public landing. Signed-in users bounce straight to /dashboard so the only
+// reason to see this card is "logged out". The signed-out view points to
+// /login — no marketing surface, no public sign-up.
+
+export const dynamic = "force-dynamic";
+
+export default async function LandingPage() {
+  const supabase = await createSupabaseServerClient();
+  if (supabase) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) redirect("/dashboard");
+  }
+
   return (
     <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md rounded-xl border border-border bg-card text-card-foreground p-8 shadow-sm">
@@ -19,8 +37,15 @@ export default function LandingPage() {
           helper that shows its work.
         </p>
         <div className="mt-6 pt-6 border-t border-border">
-          <p className="text-xs text-muted-foreground font-mono">
-            Build in progress. Sign-in lands in M3.
+          <Link
+            href="/login"
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-foreground text-background px-4 py-2 text-sm font-medium tracking-tight hover:bg-foreground/90 transition"
+          >
+            Sign in
+            <span aria-hidden>&rarr;</span>
+          </Link>
+          <p className="mt-3 text-xs text-muted-foreground font-mono">
+            Single-user cockpit. Magic link by email.
           </p>
         </div>
       </div>
