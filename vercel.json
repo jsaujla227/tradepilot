@@ -1,12 +1,16 @@
 {
   "crons": [
     {
-      "path": "/api/cron/journal-review",
-      "schedule": "0 23 1 * *"
+      "path": "/api/cron/scan",
+      "schedule": "35 13 * * 1-5"
     },
     {
       "path": "/api/cron/snapshot",
       "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/journal-review",
+      "schedule": "0 23 1 * *"
     }
   ]
 }

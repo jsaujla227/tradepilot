@@ -87,7 +87,7 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
         >
           {/* Header row */}
           <div className="flex items-start justify-between gap-3">
-            <div className="flex items-baseline gap-3">
+            <div className="flex items-baseline gap-3 flex-wrap">
               <span className="font-mono font-semibold text-base">{item.ticker}</span>
               {item.sector && (
                 <span className="rounded px-1.5 py-0.5 text-[10px] bg-foreground/8 text-muted-foreground">
@@ -99,6 +99,14 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
                   {formatMoney(item.price)}
                 </span>
               )}
+              {/* Near-entry alert: price within 2% of target entry */}
+              {item.price != null &&
+                item.target_entry != null &&
+                Math.abs(item.price - item.target_entry) / item.target_entry <= 0.02 && (
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/20 text-yellow-400 uppercase tracking-wide">
+                    Near entry
+                  </span>
+                )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
               {item.score ? (
