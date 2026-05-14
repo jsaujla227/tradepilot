@@ -41,17 +41,9 @@ export function RMultipleCalculator() {
       description="Reward measured in units of risk. Planned R before entry, actual R after exit."
     >
       <div className="grid grid-cols-2 gap-3">
-        <NumberField
-          label="Entry ($)"
-          value={entry}
-          onChange={setEntry}
-        />
+        <NumberField label="Entry ($)" value={entry} onChange={setEntry} />
         <NumberField label="Stop ($)" value={stop} onChange={setStop} />
-        <NumberField
-          label="Target ($)"
-          value={target}
-          onChange={setTarget}
-        />
+        <NumberField label="Target ($)" value={target} onChange={setTarget} />
         <NumberField
           label="Exit ($, optional)"
           value={exit}

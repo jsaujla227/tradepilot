@@ -11,9 +11,15 @@ import {
   ErrorBanner,
 } from "./shell";
 
-export function PositionSizeCalculator() {
-  const [accountSize, setAccountSize] = useState(10000);
-  const [maxRiskPct, setMaxRiskPct] = useState(1);
+export function PositionSizeCalculator({
+  defaultAccountSize = 10000,
+  defaultMaxRiskPct = 1,
+}: {
+  defaultAccountSize?: number;
+  defaultMaxRiskPct?: number;
+}) {
+  const [accountSize, setAccountSize] = useState(defaultAccountSize);
+  const [maxRiskPct, setMaxRiskPct] = useState(defaultMaxRiskPct);
   const [entry, setEntry] = useState(100);
   const [stop, setStop] = useState(95);
 
@@ -48,16 +54,8 @@ export function PositionSizeCalculator() {
           onChange={setMaxRiskPct}
           step="0.1"
         />
-        <NumberField
-          label="Entry price ($)"
-          value={entry}
-          onChange={setEntry}
-        />
-        <NumberField
-          label="Stop price ($)"
-          value={stop}
-          onChange={setStop}
-        />
+        <NumberField label="Entry price ($)" value={entry} onChange={setEntry} />
+        <NumberField label="Stop price ($)" value={stop} onChange={setStop} />
       </div>
 
       {result.ok ? (
@@ -84,16 +82,12 @@ export function PositionSizeCalculator() {
               label="% of account"
               value={formatPct(result.data.pctOfAccount)}
             />
-            <ResultRow
-              label="Direction"
-              value={result.data.direction}
-            />
+            <ResultRow label="Direction" value={result.data.direction} />
           </div>
           <WhyReveal>
             <p>
-              risk $ = account × max risk % ={" "}
-              {formatMoney(accountSize)} × {formatPct(maxRiskPct)} ={" "}
-              {formatMoney(result.data.riskAmount)}
+              risk $ = account × max risk % = {formatMoney(accountSize)} ×{" "}
+              {formatPct(maxRiskPct)} = {formatMoney(result.data.riskAmount)}
             </p>
             <p>
               per-share risk = |entry − stop| = |{formatMoney(entry)} −{" "}

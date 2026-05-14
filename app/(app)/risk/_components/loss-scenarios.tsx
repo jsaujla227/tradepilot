@@ -33,17 +33,8 @@ export function LossScenariosCalculator() {
       description="What this position loses at -1%, -3%, -5%, -10%, and -20% adverse moves."
     >
       <div className="grid grid-cols-2 gap-3">
-        <NumberField
-          label="Shares"
-          value={shares}
-          onChange={setShares}
-          step="1"
-        />
-        <NumberField
-          label="Cost basis ($)"
-          value={entry}
-          onChange={setEntry}
-        />
+        <NumberField label="Shares" value={shares} onChange={setShares} step="1" />
+        <NumberField label="Cost basis ($)" value={entry} onChange={setEntry} />
       </div>
 
       {result.ok ? (
@@ -59,10 +50,7 @@ export function LossScenariosCalculator() {
               </thead>
               <tbody className="font-mono tabular-nums">
                 {result.data.scenarios.map((s) => (
-                  <tr
-                    key={s.dropPct}
-                    className="border-t border-border/60"
-                  >
+                  <tr key={s.dropPct} className="border-t border-border/60">
                     <td className="px-3 py-2 text-foreground/80">
                       {formatPct(s.dropPct)}
                     </td>
@@ -91,7 +79,8 @@ export function LossScenariosCalculator() {
             </table>
           </div>
           <WhyReveal>
-            <p>position value = shares × cost basis = {shares} ×{" "}
+            <p>
+              position value = shares × cost basis = {shares} ×{" "}
               {formatMoney(entry)} = {formatMoney(result.data.positionValue)}
             </p>
             <p>

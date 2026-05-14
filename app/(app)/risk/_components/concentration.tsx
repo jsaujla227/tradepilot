@@ -22,9 +22,15 @@ const severityClass: Record<ConcentrationSeverity, string> = {
   critical: "bg-red-500/15 text-red-300 border-red-500/30",
 };
 
-export function ConcentrationCalculator() {
-  const [positionValue, setPositionValue] = useState(3000);
-  const [portfolioValue, setPortfolioValue] = useState(10000);
+export function ConcentrationCalculator({
+  defaultPortfolioValue = 10000,
+}: {
+  defaultPortfolioValue?: number;
+}) {
+  const [positionValue, setPositionValue] = useState(
+    Math.min(3000, defaultPortfolioValue * 0.3),
+  );
+  const [portfolioValue, setPortfolioValue] = useState(defaultPortfolioValue);
 
   const result = useMemo(() => {
     try {
@@ -75,9 +81,8 @@ export function ConcentrationCalculator() {
           </div>
           <WhyReveal>
             <p>
-              allocation = position ÷ portfolio ={" "}
-              {formatMoney(positionValue)} ÷ {formatMoney(portfolioValue)} ={" "}
-              {formatPct(result.data.pct)}
+              allocation = position ÷ portfolio = {formatMoney(positionValue)} ÷{" "}
+              {formatMoney(portfolioValue)} = {formatPct(result.data.pct)}
             </p>
             <p>thresholds:</p>
             <p>· &lt; 10% → diversified (low)</p>

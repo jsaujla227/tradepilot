@@ -1,3 +1,5 @@
+import { getUserAndProfile } from "@/lib/profile";
+import { DEFAULT_PROFILE } from "@/lib/profile";
 import { PositionSizeCalculator } from "./_components/position-size";
 import { RMultipleCalculator } from "./_components/r-multiple";
 import { LossScenariosCalculator } from "./_components/loss-scenarios";
@@ -9,7 +11,11 @@ export const metadata = {
     "Position sizing, R-multiple, loss scenarios, and concentration math — with the math shown.",
 };
 
-export default function RiskPage() {
+export default async function RiskPage() {
+  const session = await getUserAndProfile();
+  const defaults = session?.profile ?? DEFAULT_PROFILE;
+  const signedIn = !!session;
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 md:py-14">
       <header className="mb-8">
@@ -26,13 +32,41 @@ export default function RiskPage() {
           <span className="font-mono text-foreground/80">Why?</span> reveal
           showing exactly how the number was computed — no black boxes.
         </p>
+        {signedIn ? (
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Auto-filled with your saved account size and max-risk-per-trade.{" "}
+            <a
+              href="/settings"
+              className="underline-offset-2 hover:underline text-foreground/80"
+            >
+              Change in settings
+            </a>
+            .
+          </p>
+        ) : (
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Using public defaults.{" "}
+            <a
+              href="/login?next=/risk"
+              className="underline-offset-2 hover:underline text-foreground/80"
+            >
+              Sign in
+            </a>{" "}
+            to auto-fill from your profile.
+          </p>
+        )}
       </header>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <PositionSizeCalculator />
+        <PositionSizeCalculator
+          defaultAccountSize={defaults.account_size_initial}
+          defaultMaxRiskPct={defaults.max_risk_per_trade_pct}
+        />
         <RMultipleCalculator />
         <LossScenariosCalculator />
-        <ConcentrationCalculator />
+        <ConcentrationCalculator
+          defaultPortfolioValue={defaults.account_size_initial}
+        />
       </div>
     </div>
   );
