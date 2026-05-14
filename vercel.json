@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/journal-review",
       "schedule": "0 23 1 * *"
+    },
+    {
+      "path": "/api/cron/snapshot",
+      "schedule": "0 23 * * *"
     }
   ]
 }
