@@ -65,9 +65,9 @@ OUTPUT FORMAT:
 - Bullet points are fine for lists of 3+ items.
 - End every response with the disclaimer on its own line, separated by a blank line.`;
 
-// Bedrock on-demand pricing per million tokens (us-west-2, Claude 3.5 Sonnet v2)
+// Bedrock pricing per million tokens (Claude Opus 4.6 via global inference profile)
 const PRICING = {
-  "us.anthropic.claude-3-5-sonnet-20241022-v2:0": { input: 3.0, output: 15.0, cacheRead: 0.3, cacheCreation: 3.75 },
+  "global.anthropic.claude-opus-4-6-v1": { input: 15.0, output: 75.0, cacheRead: 1.5, cacheCreation: 18.75 },
 } as const;
 
 function calcCost(
@@ -139,9 +139,9 @@ export async function POST(req: NextRequest) {
   }
 
   const anthropic = new AnthropicBedrock({
-    awsRegion: process.env.AWS_REGION ?? "us-west-2",
+    awsRegion: process.env.AWS_REGION ?? "us-east-2",
   });
-  const model = "us.anthropic.claude-3-5-sonnet-20241022-v2:0";
+  const model = "global.anthropic.claude-opus-4-6-v1";
 
   const stream = anthropic.messages.stream({
     model,

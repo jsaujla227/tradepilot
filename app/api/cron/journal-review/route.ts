@@ -57,9 +57,9 @@ export async function GET(req: NextRequest) {
   }
 
   const anthropic = new AnthropicBedrock({
-    awsRegion: process.env.AWS_REGION ?? "us-west-2",
+    awsRegion: process.env.AWS_REGION ?? "us-east-2",
   });
-  const model = "us.anthropic.claude-3-opus-20240229-v1:0";
+  const model = "global.anthropic.claude-opus-4-6-v1";
   const results: { userId: string; status: string; tokens?: number }[] = [];
 
   for (const { user_id } of profiles) {
