@@ -6,8 +6,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 // Component, page, or Client Component. The `server-only` import will fail
 // the build if this file is ever pulled into a client bundle.
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let cached: SupabaseClient<any> | null = null;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function supabaseAdmin(): SupabaseClient<any> {
   if (cached) return cached;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
