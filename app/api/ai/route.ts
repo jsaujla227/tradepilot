@@ -65,19 +65,16 @@ OUTPUT FORMAT:
 - Bullet points are fine for lists of 3+ items.
 - End every response with the disclaimer on its own line, separated by a blank line.`;
 
-// Bedrock pricing per million tokens (Claude Opus 4.6 via global inference profile)
-const PRICING = {
-  "global.anthropic.claude-opus-4-6-v1": { input: 15.0, output: 75.0, cacheRead: 1.5, cacheCreation: 18.75 },
-} as const;
+// Bedrock pricing per million tokens — Claude Opus 4.6 rates
+const OPUS_PRICING = { input: 15.0, output: 75.0, cacheRead: 1.5, cacheCreation: 18.75 };
 
 function calcCost(
-  model: keyof typeof PRICING,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens: number,
   cacheCreationTokens: number,
 ): number {
-  const p = PRICING[model];
+  const p = OPUS_PRICING;
   return (
     (inputTokens * p.input +
       outputTokens * p.output +
@@ -138,10 +135,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const modelId = process.env.BEDROCK_MODEL_ID;
+  if (!modelId) return new Response("BEDROCK_MODEL_ID not configured", { status: 503 });
+
   const anthropic = new AnthropicBedrock({
     awsRegion: process.env.AWS_REGION ?? "us-east-2",
   });
-  const model = "global.anthropic.claude-opus-4-6-v1";
+  const model = modelId;
 
   const stream = anthropic.messages.stream({
     model,
@@ -191,7 +191,6 @@ export async function POST(req: NextRequest) {
         }
 
         const costUsd = calcCost(
-          model,
           inputTokens,
           outputTokens,
           cacheReadInputTokens,

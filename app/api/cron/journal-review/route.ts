@@ -56,10 +56,14 @@ export async function GET(req: NextRequest) {
     return new Response("Failed to fetch profiles", { status: 500 });
   }
 
+  const model = process.env.BEDROCK_MODEL_ID;
+  if (!model) {
+    return new Response("BEDROCK_MODEL_ID not configured", { status: 503 });
+  }
+
   const anthropic = new AnthropicBedrock({
     awsRegion: process.env.AWS_REGION ?? "us-east-2",
   });
-  const model = "global.anthropic.claude-opus-4-6-v1";
   const results: { userId: string; status: string; tokens?: number }[] = [];
 
   for (const { user_id } of profiles) {
