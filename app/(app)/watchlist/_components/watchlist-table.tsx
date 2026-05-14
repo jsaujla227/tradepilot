@@ -1,6 +1,7 @@
 import { type WatchlistScore } from "@/lib/scoring";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { removeWatchlistItem } from "../actions";
+import { ExplainButton } from "@/components/ai/explain-button";
 
 export type ScoredWatchlistItem = {
   id: string;
@@ -141,6 +142,28 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
               <InputRow {...item.score.volatility} />
               <InputRow {...item.score.rMultiple} />
               <InputRow {...item.score.liquidity} />
+              <div className="pt-1 border-t border-border/30 mt-1">
+                <ExplainButton
+                  label="Explain this score"
+                  prompt={`Explain the watchlist score for ${item.ticker}. Break down each input and tell me what's driving the score up or down.`}
+                  dataProvided={{
+                    ticker: item.ticker,
+                    sector: item.sector,
+                    price: item.price,
+                    targetEntry: item.target_entry,
+                    targetStop: item.target_stop,
+                    targetPrice: item.target_price,
+                    reason: item.reason,
+                    score: {
+                      total: item.score.total,
+                      trend: item.score.trend,
+                      volatility: item.score.volatility,
+                      rMultiple: item.score.rMultiple,
+                      liquidity: item.score.liquidity,
+                    },
+                  }}
+                />
+              </div>
             </div>
           )}
 

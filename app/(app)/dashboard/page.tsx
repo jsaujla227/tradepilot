@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getUserAndProfile, DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView } from "@/lib/portfolio";
 import { PreTradeChecklist } from "@/components/risk/pre-trade-checklist";
+import { ExplainButton } from "@/components/ai/explain-button";
 import { formatMoney, formatPct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +105,8 @@ export default async function DashboardPage() {
                   <th className="pb-2 pr-4 text-right">Qty</th>
                   <th className="pb-2 pr-4 text-right">Avg cost</th>
                   <th className="pb-2 pr-4 text-right">Price</th>
-                  <th className="pb-2 text-right">Open P&L</th>
+                  <th className="pb-2 pr-4 text-right">Open P&L</th>
+                  <th className="pb-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
@@ -119,7 +121,7 @@ export default async function DashboardPage() {
                       {h.price != null ? formatMoney(h.price) : "—"}
                     </td>
                     <td
-                      className={`py-1.5 text-right tabular-nums ${
+                      className={`py-1.5 pr-4 text-right tabular-nums ${
                         h.open_pnl == null
                           ? ""
                           : h.open_pnl >= 0
@@ -128,6 +130,24 @@ export default async function DashboardPage() {
                       }`}
                     >
                       {h.open_pnl != null ? formatMoney(h.open_pnl) : "—"}
+                    </td>
+                    <td className="py-1.5 text-right">
+                      <ExplainButton
+                        label="Explain"
+                        prompt={`Explain my ${h.ticker} position: what is my risk exposure, open P&L, and what could go wrong?`}
+                        dataProvided={{
+                          ticker: h.ticker,
+                          qty: h.qty,
+                          avgCost: h.avg_cost,
+                          currentPrice: h.price,
+                          openPnl: h.open_pnl,
+                          marketValue: h.market_value,
+                          totalPortfolioValue: holdings.total_market_value,
+                          accountSize,
+                          maxRiskPct,
+                          dailyLossLimitPct,
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}
