@@ -13,6 +13,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", milestone: "M4" },
   { href: "/portfolio", label: "Portfolio", milestone: "M4" },
+  { href: "/orders", label: "Orders", milestone: "M6" },
   { href: "/watchlist", label: "Watchlist", milestone: "M8" },
   { href: "/risk", label: "Risk", milestone: null },
   { href: "/journal", label: "Journal", milestone: "M9" },
