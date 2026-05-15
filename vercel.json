@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "echo \"$VERCEL_GIT_COMMIT_MESSAGE\" | grep -q '^\\[skip deploy\\]' && exit 1; git diff HEAD~1 --name-only | grep -qvE '(\\.test\\.(ts|tsx)$|\\.md$|\\.env\\.example$)' && exit 0 || exit 1",
   "crons": [
     {
       "path": "/api/cron/context-refresh",
