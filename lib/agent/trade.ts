@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQuote } from "@/lib/finnhub/data";
+import { hasMassiveCreds, isMarketOpen } from "@/lib/market-data/massive";
 
 // Autonomous paper-trade execution. Called by:
 //   app/api/cron/agent-trade (scheduled, CRON_SECRET)
@@ -27,6 +28,16 @@ export async function runAgentTrades(
 ): Promise<AgentTradeResult[]> {
   const today = new Date().toISOString().slice(0, 10);
   const results: AgentTradeResult[] = [];
+
+  // Holiday guard: if Massive reports the US market closed (e.g. Thanksgiving
+  // on a weekday) skip the whole run. Weekend filtering already happens at
+  // the cron schedule level. If MASSIVE_API_KEY isn't set we fall through.
+  if (hasMassiveCreds()) {
+    const open = await isMarketOpen();
+    if (!open) {
+      return [{ userId: "*", status: "skipped: market closed (holiday)", ordersPlaced: 0 }];
+    }
+  }
 
   const { data: profiles, error: profileErr } = await admin
     .from("profiles")

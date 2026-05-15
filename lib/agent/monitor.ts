@@ -1,6 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQuotesMap } from "@/lib/finnhub/data";
+import { hasMassiveCreds, isMarketOpen } from "@/lib/market-data/massive";
+import { hasAlphaVantageCreds, getRSI } from "@/lib/market-data/alphavantage";
 
 // Position monitor. Called by:
 //   app/api/cron/position-monitor (scheduled, CRON_SECRET)
@@ -23,6 +25,13 @@ export async function runPositionMonitor(
   admin: SupabaseClient<any>,
 ): Promise<MonitorResult[]> {
   const results: MonitorResult[] = [];
+
+  if (hasMassiveCreds()) {
+    const open = await isMarketOpen();
+    if (!open) {
+      return [{ userId: "*", status: "skipped: market closed (holiday)", stopsHit: 0, positionsChecked: 0 }];
+    }
+  }
 
   const { data: profiles, error: profileErr } = await admin
     .from("profiles")
@@ -95,8 +104,23 @@ export async function runPositionMonitor(
           continue;
         }
 
+        // Exit condition: stop-loss OR RSI overbought (>75 on daily)
+        let exitReason: string | null = null;
         if (quote.price <= stop) {
-          const note = `Agent: stop hit — price $${quote.price.toFixed(2)} ≤ stop $${stop.toFixed(2)}`;
+          exitReason = `stop hit — price $${quote.price.toFixed(2)} ≤ stop $${stop.toFixed(2)}`;
+        } else if (hasAlphaVantageCreds()) {
+          try {
+            const rsi = await getRSI(ticker);
+            if (rsi && rsi.value > 75) {
+              exitReason = `RSI overbought — ${rsi.value.toFixed(1)} > 75 (taking profit)`;
+            }
+          } catch {
+            // Rate-limited or vendor error — skip RSI exit, keep stop-loss check
+          }
+        }
+
+        if (exitReason) {
+          const note = `Agent: ${exitReason}`;
 
           const { data: order, error: orderErr } = await admin
             .from("orders")
@@ -122,7 +146,7 @@ export async function runPositionMonitor(
 
           if (fillErr) {
             await admin.from("orders").update({ status: "rejected" }).eq("id", order.id);
-            await log(admin, userId, "error", ticker, order.id as string, `Stop fill failed: ${fillErr.message}`);
+            await log(admin, userId, "error", ticker, order.id as string, `Exit fill failed: ${fillErr.message}`);
             continue;
           }
 
