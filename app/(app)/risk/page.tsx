@@ -1,5 +1,6 @@
 import { getUserAndProfile } from "@/lib/profile";
 import { DEFAULT_PROFILE } from "@/lib/profile";
+import { getUserTickers } from "@/lib/user-tickers";
 import { PositionSizeCalculator } from "./_components/position-size";
 import { RMultipleCalculator } from "./_components/r-multiple";
 import { LossScenariosCalculator } from "./_components/loss-scenarios";
@@ -15,6 +16,7 @@ export default async function RiskPage() {
   const session = await getUserAndProfile();
   const defaults = session?.profile ?? DEFAULT_PROFILE;
   const signedIn = !!session;
+  const tickers = signedIn ? await getUserTickers() : [];
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 md:py-14">
@@ -41,7 +43,7 @@ export default async function RiskPage() {
             >
               Change in settings
             </a>
-            .
+            . Pick a ticker to auto-populate the entry price from a live quote.
           </p>
         ) : (
           <p className="mt-3 text-[11px] text-muted-foreground">
@@ -61,9 +63,10 @@ export default async function RiskPage() {
         <PositionSizeCalculator
           defaultAccountSize={defaults.account_size_initial}
           defaultMaxRiskPct={defaults.max_risk_per_trade_pct}
+          tickers={tickers}
         />
-        <RMultipleCalculator />
-        <LossScenariosCalculator />
+        <RMultipleCalculator tickers={tickers} />
+        <LossScenariosCalculator tickers={tickers} />
         <ConcentrationCalculator
           defaultPortfolioValue={defaults.account_size_initial}
         />

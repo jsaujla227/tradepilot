@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrders } from "@/lib/broker/paper";
+import { getUserTickers } from "@/lib/user-tickers";
 import { OrdersTable } from "./_components/orders-table";
 import { SubmitOrderForm } from "./_components/submit-order-form";
 
@@ -15,7 +16,10 @@ export default async function OrdersPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const orders = await getOrders(50);
+  const [orders, tickers] = await Promise.all([
+    getOrders(50),
+    getUserTickers(),
+  ]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-8">
@@ -31,7 +35,7 @@ export default async function OrdersPage() {
         <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Submit paper order
         </h2>
-        <SubmitOrderForm />
+        <SubmitOrderForm tickers={tickers} />
       </section>
 
       <section className="space-y-4 rounded-lg border border-border bg-card/50 p-4">

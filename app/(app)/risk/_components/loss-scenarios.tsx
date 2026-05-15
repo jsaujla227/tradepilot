@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { lossScenarios, RiskError } from "@/lib/risk";
 import { formatMoney, formatPct } from "@/lib/format";
+import { TickerPicker, type PickedQuote } from "@/components/ticker-picker";
+import type { UserTicker } from "@/lib/user-tickers";
 import {
   CalculatorCard,
   NumberField,
@@ -10,9 +12,25 @@ import {
   ErrorBanner,
 } from "./shell";
 
-export function LossScenariosCalculator() {
+export function LossScenariosCalculator({
+  tickers = [],
+}: {
+  tickers?: UserTicker[];
+}) {
   const [shares, setShares] = useState(100);
   const [entry, setEntry] = useState(50);
+  const [ticker, setTicker] = useState("");
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+
+  const handlePick = (nextTicker: string, quote: PickedQuote | null) => {
+    setTicker(nextTicker);
+    if (quote) {
+      setEntry(Number(quote.price.toFixed(2)));
+      setLivePrice(quote.price);
+    } else {
+      setLivePrice(null);
+    }
+  };
 
   const result = useMemo(() => {
     try {
@@ -32,6 +50,17 @@ export function LossScenariosCalculator() {
       title="Loss scenarios"
       description="What this position loses at -1%, -3%, -5%, -10%, and -20% adverse moves."
     >
+      <TickerPicker
+        tickers={tickers}
+        value={ticker}
+        onPick={handlePick}
+        label="Ticker (auto-fills cost basis)"
+      />
+      {livePrice != null && ticker && (
+        <p className="-mt-2 text-[11px] text-muted-foreground tabular-nums">
+          Last {ticker}: {formatMoney(livePrice)} — auto-filled into cost basis
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <NumberField label="Shares" value={shares} onChange={setShares} step="1" />
         <NumberField label="Cost basis ($)" value={entry} onChange={setEntry} />
