@@ -151,6 +151,8 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
               <InputRow {...item.score.rMultiple} />
               <InputRow {...item.score.liquidity} />
               <InputRow {...item.score.eventRisk} />
+              <InputRow {...item.score.longTrend} />
+              <InputRow {...item.score.rsi} />
               <div className="pt-1 border-t border-border/30 mt-1">
                 <ExplainButton
                   label="Assess this setup"
@@ -171,6 +173,8 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
                       rMultiple: item.score.rMultiple,
                       liquidity: item.score.liquidity,
                       eventRisk: item.score.eventRisk,
+                      longTrend: item.score.longTrend,
+                      rsi: item.score.rsi,
                     },
                   }}
                 />

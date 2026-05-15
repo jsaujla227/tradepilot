@@ -1,6 +1,7 @@
 import "server-only";
 import { getQuote, type Quote } from "@/lib/finnhub/data";
 import { getEarningsContext } from "@/lib/finnhub/context";
+import { getIndicators } from "@/lib/massive/indicators";
 import { scoreMomentum, type MomentumBreakdown } from "@/lib/scoring";
 
 // Scanner uses the shared `scoreMomentum` function from lib/scoring so that
@@ -29,9 +30,10 @@ export async function scanTickers(tickers: readonly string[]): Promise<ScanResul
 
     const settled = await Promise.allSettled(
       batch.map(async (ticker) => {
-        const [{ quote }, earnings] = await Promise.all([
+        const [{ quote }, earnings, indicators] = await Promise.all([
           getQuote(ticker),
           getEarningsContext(ticker),
+          getIndicators(ticker).catch(() => ({ sma50: null, sma200: null, rsi14: null })),
         ]);
         const { momentum, breakdown } = scoreMomentum({
           price: quote.price,
@@ -39,6 +41,9 @@ export async function scanTickers(tickers: readonly string[]): Promise<ScanResul
           high: quote.high,
           low: quote.low,
           daysToEarnings: earnings?.daysUntil ?? null,
+          sma50: indicators.sma50,
+          sma200: indicators.sma200,
+          rsi14: indicators.rsi14,
         });
         return { ticker, momentum, breakdown, quote } satisfies ScanResult;
       }),
