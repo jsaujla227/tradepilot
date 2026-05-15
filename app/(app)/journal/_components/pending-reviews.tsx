@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useId, useState, useEffect } from "react";
 import { submitReview, type ReviewState } from "../actions";
 import { formatMoney } from "@/lib/format";
 
@@ -27,6 +27,7 @@ function ReviewForm({
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(submitReview, initial);
+  const idPrefix = useId();
 
   useEffect(() => {
     if (state.saved) onDone();
@@ -44,25 +45,40 @@ function ReviewForm({
           { name: "what_didnt", label: "What didn't work?" },
           { name: "lessons", label: "Lessons" },
         ] as const
-      ).map(({ name, label }) => (
-        <div key={name} className="space-y-1">
-          <label className="text-xs text-muted-foreground">{label}</label>
-          <textarea
-            name={name}
-            required
-            rows={2}
-            maxLength={1000}
-            className={TEXTAREA}
-          />
-        </div>
-      ))}
+      ).map(({ name, label }) => {
+        const fieldId = `${idPrefix}-${name}`;
+        return (
+          <div key={name} className="space-y-1">
+            <label htmlFor={fieldId} className="text-xs text-muted-foreground">
+              {label}
+            </label>
+            <textarea
+              id={fieldId}
+              name={name}
+              required
+              rows={2}
+              maxLength={1000}
+              className={TEXTAREA}
+            />
+          </div>
+        );
+      })}
 
       <div className="space-y-1">
-        <label className="text-xs text-muted-foreground">
+        <label
+          htmlFor={`${idPrefix}-r_realized`}
+          className="text-xs text-muted-foreground"
+        >
           R realized{" "}
           <span className="text-muted-foreground/50">(optional)</span>
         </label>
-        <input name="r_realized" type="number" step="any" className={`${INPUT} w-28`} />
+        <input
+          id={`${idPrefix}-r_realized`}
+          name="r_realized"
+          type="number"
+          step="any"
+          className={`${INPUT} w-28`}
+        />
       </div>
 
       <div className="flex items-center gap-3">

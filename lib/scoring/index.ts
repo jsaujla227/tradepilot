@@ -2,6 +2,7 @@
 // Every function is unit-tested in index.test.ts.
 
 import type { BarStats } from "@/lib/market-data/bar-stats";
+import { formatDollarVolume } from "@/lib/format";
 
 export type ScoreInput = {
   /** 0–1, higher = more favourable. */
@@ -261,13 +262,6 @@ function scoreLiquidity(avgDollarVolume: number | null = null): ScoreInput {
     why: `Average dollar volume over the last 20 daily bars is ${fmt}/day. log10 scale: $200 k/day scores 0, $50 M/day scores 1. Larger volume = lower slippage = higher score → ${value.toFixed(2)}.`,
     dataAvailable: true,
   };
-}
-
-function formatDollarVolume(n: number): string {
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
 }
 
 // -- Event risk (watchlist 20%, momentum 20%) -------------------------------

@@ -17,11 +17,12 @@ function Criterion({
     <div className="flex items-center justify-between py-2 text-sm">
       <div className="flex items-center gap-2">
         <span
-          className={`text-xs font-mono ${met ? "text-green-400" : "text-zinc-600"}`}
-          aria-label={met ? "met" : "not met"}
+          aria-hidden="true"
+          className={`text-xs font-mono ${met ? "text-green-400" : "text-muted-foreground/60"}`}
         >
           {met ? "✓" : "○"}
         </span>
+        <span className="sr-only">{met ? "met" : "not met"}: </span>
         <span className="text-foreground/80">{label}</span>
       </div>
       <div className="text-right">

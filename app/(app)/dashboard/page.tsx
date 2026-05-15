@@ -23,7 +23,10 @@ export default async function DashboardPage() {
     profile.daily_loss_limit_pct ?? DEFAULT_PROFILE.daily_loss_limit_pct;
 
   const supabase = await createSupabaseServerClient();
-  const [holdingsResult, snapshotResult] = await Promise.all([
+  // Quotes vendor or Supabase can each rate-limit or hiccup; a single rejection
+  // would otherwise 500 the entire dashboard. Settle both branches and fall
+  // back to empty/null where needed.
+  const [holdingsResult, snapshotResult] = await Promise.allSettled([
     getHoldingsView(),
     supabase
       ? supabase
@@ -35,10 +38,23 @@ export default async function DashboardPage() {
       : Promise.resolve({ data: [] }),
   ]);
 
-  const holdings = holdingsResult;
-  const snapshots = (
-    (snapshotResult as { data: Array<{ snapshot_date: string; total_value: number }> | null }).data ?? []
-  ).map((s) => ({
+  const holdings =
+    holdingsResult.status === "fulfilled"
+      ? holdingsResult.value
+      : {
+          holdings: [],
+          total_cost_basis: 0,
+          total_market_value: null,
+          total_open_pnl: null,
+          priced_count: 0,
+          quotes_attempted: false,
+        };
+  const snapshotRows =
+    snapshotResult.status === "fulfilled"
+      ? ((snapshotResult.value as { data: Array<{ snapshot_date: string; total_value: number }> | null })
+          .data ?? [])
+      : [];
+  const snapshots = snapshotRows.map((s) => ({
     snapshot_date: String(s.snapshot_date),
     total_value: Number(s.total_value),
   }));

@@ -42,8 +42,22 @@ export async function GET(req: NextRequest) {
 
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // Scan once — results are shared for all users (single-user cockpit)
-  const results = await scanTickers(SP500_TOP100);
+  // Scan once — results are shared for all users (single-user cockpit). A
+  // bare throw here would 500 the cron and skip the upsert loop entirely, so
+  // wrap and surface a structured failure instead.
+  let results;
+  try {
+    results = await scanTickers(SP500_TOP100);
+  } catch (err) {
+    return Response.json(
+      {
+        ok: false,
+        reason: "scanner threw",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      { status: 502 },
+    );
+  }
 
   if (results.length === 0) {
     return Response.json({ ok: false, reason: "No quotes returned from Finnhub" });

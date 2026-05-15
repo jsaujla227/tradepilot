@@ -19,37 +19,53 @@ export default async function PortfolioPage() {
 
   const supabase = await createSupabaseServerClient();
 
-  const [holdingsView, transactions] = await Promise.all([
+  const [holdingsSettled, txSettled] = await Promise.allSettled([
     getHoldingsView(),
     getRecentTransactions(50),
   ]);
+  const holdingsView =
+    holdingsSettled.status === "fulfilled"
+      ? holdingsSettled.value
+      : {
+          holdings: [],
+          total_cost_basis: 0,
+          total_market_value: null,
+          total_open_pnl: null,
+          priced_count: 0,
+          quotes_attempted: false,
+        };
+  const transactions =
+    txSettled.status === "fulfilled" ? txSettled.value : [];
 
-  // Sector concentration: warn when any sector > 25% of priced holdings
+  // Sector concentration: warn when any sector > 25% of priced holdings.
+  // ticker_meta read is non-essential, so a failure should not break the page.
   const tickers = holdingsView.holdings.map((h) => h.ticker);
   let concentratedSectors: { sector: string; pct: number }[] = [];
   if (tickers.length > 0 && supabase && holdingsView.total_market_value) {
-    const { data: metaRows } = await supabase
+    const { data: metaRows, error: metaErr } = await supabase
       .from("ticker_meta")
       .select("ticker, sector")
       .eq("user_id", session.userId)
       .in("ticker", tickers);
 
-    const sectorMap = Object.fromEntries(
-      (metaRows ?? []).map((r) => [r.ticker as string, r.sector as string]),
-    );
-    const sectorMv: Record<string, number> = {};
-    for (const h of holdingsView.holdings) {
-      if (h.market_value == null) continue;
-      const sector = sectorMap[h.ticker] ?? "Untagged";
-      sectorMv[sector] = (sectorMv[sector] ?? 0) + h.market_value;
+    if (!metaErr) {
+      const sectorMap = Object.fromEntries(
+        (metaRows ?? []).map((r) => [r.ticker as string, r.sector as string]),
+      );
+      const sectorMv: Record<string, number> = {};
+      for (const h of holdingsView.holdings) {
+        if (h.market_value == null) continue;
+        const sector = sectorMap[h.ticker] ?? "Untagged";
+        sectorMv[sector] = (sectorMv[sector] ?? 0) + h.market_value;
+      }
+      const totalMv = holdingsView.total_market_value;
+      concentratedSectors = Object.entries(sectorMv)
+        .filter(([, mv]) => (mv / totalMv) * 100 > 25)
+        .map(([sector, mv]) => ({
+          sector,
+          pct: (mv / totalMv) * 100,
+        }));
     }
-    const totalMv = holdingsView.total_market_value;
-    concentratedSectors = Object.entries(sectorMv)
-      .filter(([, mv]) => (mv / totalMv) * 100 > 25)
-      .map(([sector, mv]) => ({
-        sector,
-        pct: (mv / totalMv) * 100,
-      }));
   }
 
   const description = holdingsView.quotes_attempted

@@ -34,7 +34,9 @@ export function TickerPicker({
   label?: string;
   autoCustomFetch?: boolean;
 }) {
-  const id = useId();
+  const baseId = useId();
+  const selectId = `${baseId}-select`;
+  const customId = `${baseId}-custom`;
   const [showCustom, setShowCustom] = useState(
     value !== "" && !tickers.some((t) => t.ticker === value),
   );
@@ -105,13 +107,16 @@ export function TickerPicker({
 
   return (
     <div className="flex flex-col gap-1.5 text-xs">
-      <label htmlFor={id} className="font-medium text-foreground/90">
+      <label
+        htmlFor={showCustom ? customId : selectId}
+        className="font-medium text-foreground/90"
+      >
         {label}
       </label>
       {showCustom ? (
         <div className="flex gap-1">
           <input
-            id={id}
+            id={customId}
             type="text"
             value={customInput}
             onChange={(e) => setCustomInput(e.target.value.toUpperCase())}
@@ -142,7 +147,7 @@ export function TickerPicker({
         </div>
       ) : (
         <select
-          id={id}
+          id={selectId}
           value={value}
           onChange={handleSelectChange}
           className="h-9 rounded-md border border-input bg-background/40 px-2 font-mono text-sm outline-none transition focus:border-ring focus:ring-1 focus:ring-ring/60"

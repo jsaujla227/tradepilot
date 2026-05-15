@@ -1,20 +1,25 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/admin-auth";
 import { runPositionMonitor } from "@/lib/agent/monitor";
 
 export const maxDuration = 60;
 
 export async function POST() {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return new Response("Supabase not configured", { status: 503 });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return new Response("Unauthorized", { status: 401 });
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
   const admin = supabaseAdmin();
-  const results = await runPositionMonitor(admin);
+  if (!admin) {
+    return new Response("Supabase admin not configured", { status: 503 });
+  }
 
-  return Response.json({ ok: true, results });
+  try {
+    const results = await runPositionMonitor(admin);
+    return Response.json({ ok: true, results });
+  } catch (err) {
+    return new Response(
+      `Position monitor failed: ${err instanceof Error ? err.message : String(err)}`,
+      { status: 500 },
+    );
+  }
 }
