@@ -12,7 +12,10 @@ const BANNED = [
 
 const pattern = new RegExp(BANNED.map((w) => `\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).join("|"), "gi");
 
-const files = process.argv.slice(2);
+const files = process.argv.slice(2).filter(
+  // CLAUDE.md is the source of truth for the banlist itself — skip it
+  (f) => !f.endsWith("CLAUDE.md"),
+);
 let failed = false;
 
 for (const file of files) {

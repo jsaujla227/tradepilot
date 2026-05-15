@@ -4,6 +4,8 @@ import { getHoldingsView } from "@/lib/portfolio";
 import { PreTradeChecklist } from "@/components/risk/pre-trade-checklist";
 import { ExplainButton } from "@/components/ai/explain-button";
 import { formatMoney, formatPct } from "@/lib/format";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { AlertDismissButton } from "./_components/alert-dismiss-button";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Dashboard · TradePilot" };
@@ -20,6 +22,7 @@ export default async function DashboardPage() {
   const dailyLossLimitPct =
     profile.daily_loss_limit_pct ?? DEFAULT_PROFILE.daily_loss_limit_pct;
 
+  const supabase = await createSupabaseServerClient();
   const holdings = await getHoldingsView();
   const totalMv = holdings.total_market_value;
   const totalPnl = holdings.total_open_pnl;
@@ -27,6 +30,33 @@ export default async function DashboardPage() {
     holdings.total_cost_basis > 0 && totalPnl != null
       ? (totalPnl / holdings.total_cost_basis) * 100
       : null;
+
+  // Fetch today's undismissed position alerts
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: alertRows } = supabase
+    ? await supabase
+        .from("position_alerts")
+        .select("id, ticker, alert_type, severity, message, why, suggested_review")
+        .eq("user_id", session.userId)
+        .is("dismissed_at", null)
+        .gte("generated_at", `${today}T00:00:00Z`)
+        .order("severity") // critical < info < warning alphabetically — we sort below
+    : { data: [] };
+
+  const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 } as const;
+  type AlertRow = {
+    id: string;
+    ticker: string;
+    alert_type: string;
+    severity: "critical" | "warning" | "info";
+    message: string;
+    why: string;
+    suggested_review: string;
+  };
+  const alerts = ((alertRows ?? []) as AlertRow[]).sort(
+    (a, b) =>
+      (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3),
+  );
 
   const dailyLossLimit = (accountSize * dailyLossLimitPct) / 100;
   const lossRemaining =
@@ -49,6 +79,15 @@ export default async function DashboardPage() {
           maxRiskPct={maxRiskPct}
         />
       </div>
+
+      {/* Position alerts */}
+      {alerts.length > 0 && (
+        <section className="space-y-2">
+          {alerts.map((alert) => (
+            <AlertCard key={alert.id} alert={alert} />
+          ))}
+        </section>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -163,6 +202,57 @@ export default async function DashboardPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function AlertCard({
+  alert,
+}: {
+  alert: {
+    id: string;
+    ticker: string;
+    severity: "critical" | "warning" | "info";
+    message: string;
+    why: string;
+    suggested_review: string;
+  };
+}) {
+  const colors = {
+    critical:
+      "border-red-500/40 bg-red-950/30 text-red-300",
+    warning:
+      "border-amber-500/40 bg-amber-950/30 text-amber-300",
+    info: "border-blue-500/40 bg-blue-950/30 text-blue-300",
+  };
+  const badges = { critical: "Critical", warning: "Review", info: "Info" };
+
+  return (
+    <details className={`rounded-lg border px-4 py-3 text-sm ${colors[alert.severity]}`}>
+      <summary className="flex cursor-pointer items-center justify-between gap-3 list-none">
+        <div className="flex items-center gap-2">
+          <span className="font-mono font-semibold text-xs uppercase tracking-wide">
+            {alert.ticker}
+          </span>
+          <span className="text-[10px] font-mono uppercase tracking-wider opacity-70">
+            {badges[alert.severity]}
+          </span>
+          <span className="text-sm">{alert.message}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] opacity-60">Why?</span>
+          <AlertDismissButton alertId={alert.id} />
+        </div>
+      </summary>
+      <div className="mt-3 space-y-2 border-t border-current/20 pt-3 text-xs opacity-80">
+        <p>
+          <span className="font-semibold">Math:</span> {alert.why}
+        </p>
+        <p>
+          <span className="font-semibold">Review:</span>{" "}
+          {alert.suggested_review}
+        </p>
+      </div>
+    </details>
   );
 }
 

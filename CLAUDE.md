@@ -4,6 +4,8 @@ Private single-user AI trading cockpit. Goal: help the user make better decision
 
 The full small-batch build plan lives at `~/.claude/plans/tradepilot-build-rosy-cocoa.md` (11 milestones). Treat that plan as authoritative.
 
+The AI engine improvement plan (learned patterns, position monitor, paper agent) lives at `.claude/plans/improve-ai-engine.md`.
+
 ## Product rules
 
 - **Single user, private.** No marketing surface; the only unauthenticated route is `/login`.

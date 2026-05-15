@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { href: "/risk", label: "Risk", milestone: null },
   { href: "/journal", label: "Journal", milestone: "M9" },
   { href: "/ai", label: "AI", milestone: "M10" },
+  { href: "/agent", label: "Agent", milestone: null },
   { href: "/admin", label: "Admin", milestone: null },
 ];
 

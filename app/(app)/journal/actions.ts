@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { extractPatterns } from "@/lib/ai/patterns";
 
 const reviewSchema = z.object({
   position_id: z.string().min(1, "Position ID required"),
@@ -76,6 +77,70 @@ export async function submitReview(
 
   if (error) return { error: error.message };
 
+  // Rebuild learned_patterns for this user after every review submission.
+  // Non-fatal: pattern rebuild failure doesn't block the review save.
+  void refreshPatterns(user.id, supabase).catch(() => {});
+
   revalidatePath("/journal");
   return { saved: true };
+}
+
+// Re-extracts and upserts the user's personal trading patterns from their
+// full trade_reviews + trade_checklists + ticker_meta history.
+async function refreshPatterns(
+  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>,
+): Promise<void> {
+  const [reviewsRes, checklistsRes, metaRes] = await Promise.all([
+    supabase
+      .from("trade_reviews")
+      .select("ticker, realized_pnl, r_realized, reviewed_at")
+      .eq("user_id", userId),
+    supabase
+      .from("trade_checklists")
+      .select("ticker, side, r_at_entry")
+      .eq("user_id", userId),
+    supabase
+      .from("ticker_meta")
+      .select("ticker, sector")
+      .eq("user_id", userId),
+  ]);
+
+  const reviews = (reviewsRes.data ?? []) as {
+    ticker: string;
+    realized_pnl: number;
+    r_realized: number | null;
+    reviewed_at: string;
+  }[];
+  const checklists = (checklistsRes.data ?? []) as {
+    ticker: string;
+    side: "buy" | "sell";
+    r_at_entry: number | null;
+  }[];
+  const tickerMeta = (metaRes.data ?? []) as {
+    ticker: string;
+    sector: string | null;
+  }[];
+
+  const patterns = extractPatterns(reviews, checklists, tickerMeta);
+
+  // Rebuild: delete existing and insert fresh batch atomically-ish.
+  await supabase
+    .from("learned_patterns")
+    .delete()
+    .eq("user_id", userId);
+
+  if (patterns.length === 0) return;
+
+  await supabase.from("learned_patterns").insert(
+    patterns.map((p) => ({
+      user_id: userId,
+      pattern_type: p.pattern_type,
+      description: p.description,
+      conditions: p.conditions,
+      stats: p.stats,
+      sample_count: p.stats.sample_count,
+    })),
+  );
 }

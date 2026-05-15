@@ -15,6 +15,14 @@
     {
       "path": "/api/cron/journal-review",
       "schedule": "0 23 1 * *"
+    },
+    {
+      "path": "/api/cron/trade-doctor",
+      "schedule": "15 21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/agent",
+      "schedule": "*/15 13-20 * * 1-5"
     }
   ]
 }

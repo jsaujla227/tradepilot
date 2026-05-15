@@ -16,6 +16,7 @@ const NAV: NavItem[] = [
   { href: "/risk", label: "Risk" },
   { href: "/journal", label: "Journal" },
   { href: "/ai", label: "AI" },
+  { href: "/agent", label: "Agent" },
   { href: "/admin", label: "Admin" },
 ];
 
