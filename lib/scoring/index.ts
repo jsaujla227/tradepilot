@@ -1,6 +1,8 @@
 // Pure scoring functions. No side effects, no I/O.
 // Every function is unit-tested in index.test.ts.
 
+import type { BarStats } from "@/lib/market-data/bar-stats";
+
 export type ScoreInput = {
   /** 0–1, higher = more favourable. */
   value: number;
@@ -32,6 +34,9 @@ export type ScoreWatchlistItemInput = {
   targetPrice: number | null;
   /** Days until next scheduled earnings; null if unknown or none in window. */
   daysToEarnings: number | null;
+  /** Optional bar-derived stats. When supplied, upgrades the trend / volatility /
+   *  liquidity scores from neutral day-only placeholders to bar-backed values. */
+  bars?: BarStats | null;
 };
 
 // Watchlist weights — must sum to 1.
@@ -51,6 +56,56 @@ const W_MOMENTUM = {
 } as const;
 
 // -- Trend (watchlist 25%, momentum 45%) ------------------------------------
+// Bar-backed version: blend day momentum (50%) with SMA stack (50%).
+//   SMA stack: price > sma50 > sma200 → 1.0
+//              price > sma50 only      → 0.7
+//              price > sma200 only     → 0.5
+//              price < sma50 < sma200  → 0.0
+//              all other configurations → 0.3 (mixed/transitional)
+function scoreTrendWithBars(
+  price: number,
+  prevClose: number | null,
+  sma50: number | null,
+  sma200: number | null,
+): ScoreInput {
+  if (sma50 == null && sma200 == null) {
+    return scoreTrend(price, prevClose);
+  }
+  const dayPart = scoreTrend(price, prevClose);
+  let stackValue: number;
+  let stackLabel: string;
+  if (sma50 != null && sma200 != null) {
+    if (price > sma50 && sma50 > sma200) {
+      stackValue = 1.0;
+      stackLabel = `price > SMA50 ($${sma50.toFixed(2)}) > SMA200 ($${sma200.toFixed(2)}) — uptrend stack`;
+    } else if (price < sma50 && sma50 < sma200) {
+      stackValue = 0.0;
+      stackLabel = `price < SMA50 ($${sma50.toFixed(2)}) < SMA200 ($${sma200.toFixed(2)}) — downtrend stack`;
+    } else if (price > sma200) {
+      stackValue = 0.5;
+      stackLabel = `price above SMA200 ($${sma200.toFixed(2)}) only — mixed`;
+    } else {
+      stackValue = 0.3;
+      stackLabel = `mixed SMA configuration (price ${price < sma200 ? "<" : ">"} SMA200)`;
+    }
+  } else if (sma50 != null) {
+    stackValue = price > sma50 ? 0.7 : 0.3;
+    stackLabel = `price ${price > sma50 ? ">" : "<"} SMA50 ($${sma50.toFixed(2)}) — partial signal`;
+  } else {
+    // sma200 only
+    stackValue = price > sma200! ? 0.5 : 0.2;
+    stackLabel = `price ${price > sma200! ? ">" : "<"} SMA200 ($${sma200!.toFixed(2)}) — partial signal`;
+  }
+  const value = 0.5 * dayPart.value + 0.5 * stackValue;
+  return {
+    value,
+    label: "Trend",
+    rawLabel: `${dayPart.rawLabel} · ${stackLabel.split(" — ")[1] ?? "SMA stack"}`,
+    why: `Trend = 50 % day momentum + 50 % SMA stack. Day part: ${dayPart.rawLabel} → ${dayPart.value.toFixed(2)}. SMA stack: ${stackLabel} → ${stackValue.toFixed(2)}. Combined: ${value.toFixed(2)}.`,
+    dataAvailable: dayPart.dataAvailable,
+  };
+}
+
 // Day momentum clipped to ±3 %. Positive = better.
 // +3 % → 1.0  |  0 % → 0.5  |  −3 % → 0.0
 function scoreTrend(price: number, prevClose: number | null): ScoreInput {
@@ -77,6 +132,32 @@ function scoreTrend(price: number, prevClose: number | null): ScoreInput {
 }
 
 // -- Volatility (watchlist 20%, momentum 35%) -------------------------------
+// Bar-backed version: blend day-range volatility (50%) with annualized 20-day
+// historical vol (50%).
+//   20 %/yr → 1.0 (calm)  |  60 %/yr → 0.0 (turbulent)
+function scoreVolatilityWithBars(
+  price: number,
+  high: number | null,
+  low: number | null,
+  historicalVol20: number | null,
+): ScoreInput {
+  if (historicalVol20 == null) {
+    return scoreVolatility(price, high, low);
+  }
+  const dayPart = scoreVolatility(price, high, low);
+  const annVol = historicalVol20;
+  const hvValue = Math.max(0, Math.min(1, 1 - (annVol - 0.2) / 0.4));
+  const value = 0.5 * dayPart.value + 0.5 * hvValue;
+  const annPct = (annVol * 100).toFixed(1);
+  return {
+    value,
+    label: "Volatility",
+    rawLabel: `${dayPart.rawLabel} · 20-d HV ${annPct}%/yr`,
+    why: `Volatility = 50 % day range + 50 % 20-day historical vol. Day part: ${dayPart.rawLabel} → ${dayPart.value.toFixed(2)}. HV part: ${annPct}%/yr annualised — 20 %/yr scores 1, 60 %/yr scores 0 → ${hvValue.toFixed(2)}. Combined: ${value.toFixed(2)}.`,
+    dataAvailable: true,
+  };
+}
+
 // Day range (high − low) / price. Smaller range = calmer = higher score.
 // 0 % range → 1.0  |  ≥5 % range → 0.0
 function scoreVolatility(
@@ -154,15 +235,39 @@ function scoreRMultiple(
 }
 
 // -- Liquidity (watchlist 10%) ----------------------------------------------
-// Requires daily bars (avg dollar volume). Not available on Finnhub free tier.
-function scoreLiquidity(): ScoreInput {
+// Average daily $ volume over 20 bars. Massive.com bars feed this.
+//   ≥ $50 M/day → 1.0 (mega-cap, frictionless)
+//   $5 M/day    → 0.5 (decent mid-cap)
+//   ≤ $200 k    → 0.0 (illiquid — slippage risk on retail-size orders)
+// Log-scale mapping handles the 6 orders of magnitude between micro and mega.
+function scoreLiquidity(avgDollarVolume: number | null = null): ScoreInput {
+  if (avgDollarVolume == null || avgDollarVolume <= 0) {
+    return {
+      value: 0.5,
+      label: "Liquidity",
+      rawLabel: "bars data unavailable",
+      why: "Average dollar volume requires daily bars. Set MASSIVE_API_KEY to enable — held at 0.5 (neutral) until bars are available.",
+      dataAvailable: false,
+    };
+  }
+  // log10(200_000) ≈ 5.30; log10(50_000_000) ≈ 7.70 → span of 2.40
+  const log = Math.log10(avgDollarVolume);
+  const value = Math.max(0, Math.min(1, (log - 5.3) / 2.4));
+  const fmt = formatDollarVolume(avgDollarVolume);
   return {
-    value: 0.5,
+    value,
     label: "Liquidity",
-    rawLabel: "bars data unavailable",
-    why: "Average dollar volume requires daily bars. Not available on Finnhub free tier — held at 0.5 (neutral). Will be wired when a bars vendor is added.",
-    dataAvailable: false,
+    rawLabel: `${fmt}/day avg`,
+    why: `Average dollar volume over the last 20 daily bars is ${fmt}/day. log10 scale: $200 k/day scores 0, $50 M/day scores 1. Larger volume = lower slippage = higher score → ${value.toFixed(2)}.`,
+    dataAvailable: true,
   };
+}
+
+function formatDollarVolume(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
 }
 
 // -- Event risk (watchlist 20%, momentum 20%) -------------------------------
@@ -213,14 +318,25 @@ function scoreEventRisk(daysToEarnings: number | null): ScoreInput {
 export function scoreWatchlistItem(
   input: ScoreWatchlistItemInput,
 ): WatchlistScore {
-  const trend = scoreTrend(input.price, input.prevClose);
-  const volatility = scoreVolatility(input.price, input.high, input.low);
+  const bars = input.bars ?? null;
+  const trend = scoreTrendWithBars(
+    input.price,
+    input.prevClose,
+    bars?.sma50 ?? null,
+    bars?.sma200 ?? null,
+  );
+  const volatility = scoreVolatilityWithBars(
+    input.price,
+    input.high,
+    input.low,
+    bars?.historicalVol20 ?? null,
+  );
   const rMultiple = scoreRMultiple(
     input.targetEntry,
     input.targetStop,
     input.targetPrice,
   );
-  const liquidity = scoreLiquidity();
+  const liquidity = scoreLiquidity(bars?.avgDollarVolume ?? null);
   const eventRisk = scoreEventRisk(input.daysToEarnings);
 
   const total =
@@ -254,6 +370,8 @@ export type ScoreMomentumInput = {
   high: number | null;
   low: number | null;
   daysToEarnings: number | null;
+  /** Optional bar-derived stats; upgrades trend/volatility when supplied. */
+  bars?: BarStats | null;
 };
 
 /**
@@ -265,8 +383,19 @@ export function scoreMomentum(input: ScoreMomentumInput): {
   momentum: number;
   breakdown: MomentumBreakdown;
 } {
-  const trend = scoreTrend(input.price, input.prevClose);
-  const volatility = scoreVolatility(input.price, input.high, input.low);
+  const bars = input.bars ?? null;
+  const trend = scoreTrendWithBars(
+    input.price,
+    input.prevClose,
+    bars?.sma50 ?? null,
+    bars?.sma200 ?? null,
+  );
+  const volatility = scoreVolatilityWithBars(
+    input.price,
+    input.high,
+    input.low,
+    bars?.historicalVol20 ?? null,
+  );
   const eventRisk = scoreEventRisk(input.daysToEarnings);
 
   const raw =

@@ -3,6 +3,11 @@ import { notFound } from "next/navigation";
 import { getQuote } from "@/lib/finnhub/data";
 import { getTickerInsight } from "@/lib/ticker-insight";
 import { getBars, hasMassiveCreds, type Bar } from "@/lib/market-data/massive";
+import {
+  computeBarStats,
+  EMPTY_BAR_STATS,
+  suggestStopFromAtr,
+} from "@/lib/market-data/bar-stats";
 import { tickerSchema } from "@/lib/ticker";
 import { formatMoney, formatPct } from "@/lib/format";
 import { OhlcChart } from "@/components/ticker/ohlc-chart";
@@ -39,20 +44,32 @@ export default async function TickerDetailPage({
   if (!parsed.success) notFound();
   const ticker = parsed.data;
 
-  // 90 days of daily bars covers the typical ~3-month swing-trade window. The
-  // Massive call falls back to an empty array (handled in the chart) if the
-  // key is missing or the symbol is not covered.
-  const { from, to } = rangeFor(90);
+  // Pull bars over the longer 320-day window so SMA-200 has enough data; the
+  // chart still trims to the visible 90-day pane below. Falls back to an
+  // empty array when the key is missing or the symbol is not covered.
+  const { from, to } = rangeFor(320);
   const [barsResult, quoteResult, insight] = await Promise.allSettled([
     hasMassiveCreds() ? getBars(ticker, 1, "day", from, to) : Promise.resolve([] as Bar[]),
     getQuote(ticker),
     getTickerInsight(ticker, null),
   ]);
 
-  const bars: Bar[] =
+  const fullBars: Bar[] =
     barsResult.status === "fulfilled" ? barsResult.value : [];
+  const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  const bars: Bar[] = fullBars.filter((b) => b.time >= ninetyDaysAgoMs);
   const quote = quoteResult.status === "fulfilled" ? quoteResult.value.quote : null;
   const tickerInsight = insight.status === "fulfilled" ? insight.value : null;
+  const barStats =
+    fullBars.length > 0 ? computeBarStats(fullBars) : EMPTY_BAR_STATS;
+  const suggestedStop = quote
+    ? suggestStopFromAtr({
+        entry: quote.price,
+        atr14: barStats.atr14,
+        side: "long",
+        multiplier: 2,
+      })
+    : null;
 
   const dayChange =
     quote && quote.prevClose != null ? quote.price - quote.prevClose : null;
@@ -181,6 +198,76 @@ export default async function TickerDetailPage({
           }
         />
       </section>
+
+      {/* Bar-derived signals — only render the section when at least one is available. */}
+      {(barStats.atr14 != null ||
+        barStats.sma50 != null ||
+        barStats.sma200 != null ||
+        barStats.avgDollarVolume != null ||
+        barStats.historicalVol20 != null) && (
+        <section className="space-y-2">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Bar-derived signals ({barStats.barCount} bars)
+          </h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatCard
+              label="ATR(14)"
+              value={
+                barStats.atr14 != null ? formatMoney(barStats.atr14) : "—"
+              }
+            />
+            <StatCard
+              label="Suggested stop (2×ATR)"
+              value={
+                suggestedStop != null ? formatMoney(suggestedStop) : "—"
+              }
+              tone={suggestedStop != null ? "warn" : "muted"}
+            />
+            <StatCard
+              label="SMA 50"
+              value={
+                barStats.sma50 != null ? formatMoney(barStats.sma50) : "—"
+              }
+              tone={
+                quote && barStats.sma50 != null
+                  ? quote.price > barStats.sma50
+                    ? "up"
+                    : "down"
+                  : "muted"
+              }
+            />
+            <StatCard
+              label="SMA 200"
+              value={
+                barStats.sma200 != null ? formatMoney(barStats.sma200) : "—"
+              }
+              tone={
+                quote && barStats.sma200 != null
+                  ? quote.price > barStats.sma200
+                    ? "up"
+                    : "down"
+                  : "muted"
+              }
+            />
+            <StatCard
+              label="20-d HV (annualised)"
+              value={
+                barStats.historicalVol20 != null
+                  ? `${(barStats.historicalVol20 * 100).toFixed(1)}%/yr`
+                  : "—"
+              }
+            />
+            <StatCard
+              label="Avg $ vol (20d)"
+              value={
+                barStats.avgDollarVolume != null
+                  ? formatMarketCap(barStats.avgDollarVolume) + "/day"
+                  : "—"
+              }
+            />
+          </div>
+        </section>
+      )}
 
       {!hasMassiveCreds() && (
         <p className="text-[11px] text-muted-foreground">
