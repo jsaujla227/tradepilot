@@ -21,6 +21,7 @@
     "@upstash/redis": "^1.38.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.14.0",
     "next": "^15.1.6",
     "radix-ui": "^1.4.3",

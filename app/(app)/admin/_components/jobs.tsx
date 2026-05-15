@@ -115,6 +115,11 @@ export function AdminJobs() {
         description="Checks open positions against stop prices from trade checklists and auto-closes any that have hit their stop. Runs at 19:30 UTC."
         endpoint="/api/admin/position-monitor"
       />
+      <JobCard
+        title="5. Agent reflection"
+        description="Sonnet reflects on today's autonomous activity and nudges the agent's momentum threshold (±5 max) for tomorrow's run. Runs at 23:30 UTC after the snapshot."
+        endpoint="/api/admin/agent-reflect"
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { formatMoney, formatNumber, formatPct } from "@/lib/format";
 import type { HoldingsView } from "@/lib/portfolio";
 
@@ -94,7 +95,12 @@ export function HoldingsTable({ view }: { view: HoldingsView }) {
             return (
               <tr key={h.ticker} className="border-t border-border/60">
                 <td className="px-4 py-2.5 font-sans font-medium text-foreground">
-                  {h.ticker}
+                  <Link
+                    href={`/ticker/${h.ticker}`}
+                    className="hover:text-foreground/70 transition underline-offset-4 hover:underline"
+                  >
+                    {h.ticker}
+                  </Link>
                 </td>
                 <td className="px-4 py-2.5 text-right">
                   {formatNumber(h.qty, 4).replace(/\.?0+$/, "")}

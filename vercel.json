@@ -21,6 +21,10 @@
       "schedule": "0 23 * * *"
     },
     {
+      "path": "/api/cron/agent-reflect",
+      "schedule": "30 23 * * 1-5"
+    },
+    {
       "path": "/api/cron/journal-review",
       "schedule": "0 23 1 * *"
     }

@@ -2,18 +2,22 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQuote } from "@/lib/finnhub/data";
 import { hasMassiveCreds, isMarketOpen } from "@/lib/market-data/massive";
+import {
+  BASE_MOMENTUM_THRESHOLD,
+  getEffectiveMomentumThreshold,
+} from "@/lib/agent/lessons";
 
 // Autonomous paper-trade execution. Called by:
 //   app/api/cron/agent-trade (scheduled, CRON_SECRET)
 //   app/api/admin/agent-trade (manual trigger, user-session auth)
 //
 // For each user with agent_enabled=true the agent:
-//   1. Picks top scanner results for today above MOMENTUM_THRESHOLD
+//   1. Picks top scanner results for today above the effective momentum
+//      threshold (base 60, adjusted nightly by the reflection loop in M21).
 //   2. Skips tickers already held in the portfolio
 //   3. Submits buy orders up to agent_daily_capital_limit
 //   4. Logs every decision to agent_log
 
-const MOMENTUM_THRESHOLD = 60;
 const MAX_NEW_POSITIONS = 3;
 
 export type AgentTradeResult = {
@@ -54,19 +58,35 @@ export async function runAgentTrades(
     const result: AgentTradeResult = { userId, status: "ok", ordersPlaced: 0 };
 
     try {
-      // 1. Today's top scanner results above threshold
+      // 1. Resolve effective threshold for today (base + most recent lesson delta).
+      const { threshold, sourceLessonId } = await getEffectiveMomentumThreshold(
+        admin,
+        userId,
+      );
+      if (threshold !== BASE_MOMENTUM_THRESHOLD) {
+        await log(
+          admin,
+          userId,
+          "threshold",
+          null,
+          null,
+          `Effective momentum threshold ${threshold} (base ${BASE_MOMENTUM_THRESHOLD}, lesson ${sourceLessonId ?? "—"})`,
+        );
+      }
+
+      // 2. Today's top scanner results above the effective threshold
       const { data: scans } = await admin
         .from("scanner_results")
         .select("ticker, momentum, quote")
         .eq("user_id", userId)
         .eq("scan_date", today)
-        .gte("momentum", MOMENTUM_THRESHOLD)
+        .gte("momentum", threshold)
         .order("momentum", { ascending: false })
         .limit(10);
 
       if (!scans || scans.length === 0) {
         result.status = "skipped: no qualifying scans";
-        await log(admin, userId, "skipped", null, null, "No scanner results above threshold today");
+        await log(admin, userId, "skipped", null, null, `No scanner results above threshold ${threshold} today`);
         results.push(result);
         continue;
       }
