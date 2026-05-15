@@ -2,7 +2,7 @@
 
 Private single-user AI paper-trading cockpit. Helps make better decisions, manage risk, and learn from trades. Not financial advice.
 
-**M1–M11 complete.**
+**M1–M17 complete.**
 
 ## Stack
 

@@ -1,7 +1,12 @@
 "use client";
 
 import { useActionState } from "react";
-import { updateSettings, type SettingsState } from "../actions";
+import {
+  updateSettings,
+  setBrokerMode,
+  type SettingsState,
+  type BrokerModeState,
+} from "../actions";
 
 const initialState: SettingsState = {};
 
@@ -71,6 +76,10 @@ export function SettingsForm({
     updateSettings,
     initialState,
   );
+  const [modeState, modeAction, modePending] = useActionState<
+    BrokerModeState,
+    FormData
+  >(setBrokerMode, {});
 
   return (
     <form action={formAction} className="space-y-6">
@@ -118,22 +127,69 @@ export function SettingsForm({
         suffix="tk"
       />
 
-      {/* Broker section — read-only until M17 */}
+      {/* Broker section */}
       <div className="space-y-3">
         <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
           Broker
         </p>
-        <div className="rounded-lg border border-border/60 bg-background/30 px-4 py-3 space-y-1">
+        <div className="rounded-lg border border-border/60 bg-background/30 px-4 py-3 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm">Mode</span>
-            <span className="text-xs font-mono text-foreground/80 uppercase">
+            <span
+              className={`text-xs font-mono uppercase font-semibold ${
+                initial.broker_mode === "live"
+                  ? "text-emerald-400"
+                  : "text-foreground/70"
+              }`}
+            >
               {initial.broker_mode}
             </span>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Live trading unlocks after the agent meets paper-trading performance
-            thresholds (win rate, expectancy, max drawdown). Managed in M16.
-          </p>
+          {initial.real_money_unlocked ? (
+            <div className="space-y-2">
+              {modeState.error && (
+                <p className="text-xs text-destructive-foreground">
+                  {modeState.error}
+                </p>
+              )}
+              {modeState.saved && (
+                <p className="text-xs text-emerald-400">Mode updated.</p>
+              )}
+              <form action={modeAction} className="flex gap-2">
+                <input
+                  type="hidden"
+                  name="broker_mode"
+                  value={initial.broker_mode === "paper" ? "live" : "paper"}
+                />
+                <button
+                  type="submit"
+                  disabled={modePending}
+                  className={`rounded-md border px-3 py-1.5 text-xs font-medium transition disabled:opacity-60 disabled:cursor-not-allowed ${
+                    initial.broker_mode === "paper"
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                      : "border-border bg-card text-foreground/70 hover:bg-card/80"
+                  }`}
+                >
+                  {modePending
+                    ? "Switching…"
+                    : initial.broker_mode === "paper"
+                      ? "Switch to live"
+                      : "Switch to paper"}
+                </button>
+              </form>
+              {initial.broker_mode === "live" && (
+                <p className="text-[11px] text-yellow-400/80">
+                  Live mode: orders will route to Questrade. Ensure
+                  QUESTRADE_REFRESH_TOKEN is set in your environment.
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Live trading unlocks once your paper-trading performance meets all
+              criteria. See the scorecard below.
+            </p>
+          )}
         </div>
       </div>
 

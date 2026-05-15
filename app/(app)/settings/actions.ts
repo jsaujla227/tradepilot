@@ -3,6 +3,8 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getPaperTradingCriteria } from "@/lib/performance";
+import { DEFAULT_PROFILE } from "@/lib/profile";
 
 const settingsSchema = z.object({
   account_size_initial: z.coerce.number().positive().max(1e12),
@@ -53,5 +55,96 @@ export async function updateSettings(
 
   // Invalidate everything that reads profile (risk page, sidebar, dashboard later).
   revalidatePath("/", "layout");
+  return { saved: true };
+}
+
+export type UnlockState = { error?: string; unlocked?: boolean };
+
+export async function unlockLiveTrading(
+  prev: UnlockState,
+  formData: FormData,
+): Promise<UnlockState> {
+  void prev;
+  void formData;
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase is not configured." };
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("account_size_initial, real_money_unlocked")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (profile?.real_money_unlocked) {
+    return { unlocked: true };
+  }
+
+  const accountSize =
+    Number(profile?.account_size_initial) ||
+    DEFAULT_PROFILE.account_size_initial;
+  const criteria = await getPaperTradingCriteria(accountSize);
+
+  if (!criteria.allMet) {
+    return {
+      error: "Performance criteria not yet met. Review your paper-trading stats.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ real_money_unlocked: true })
+    .eq("user_id", user.id);
+
+  if (error) return { error: error.message };
+  revalidatePath("/settings");
+  return { unlocked: true };
+}
+
+export type BrokerModeState = { error?: string; saved?: boolean };
+
+export async function setBrokerMode(
+  _prev: BrokerModeState,
+  formData: FormData,
+): Promise<BrokerModeState> {
+  const mode = formData.get("broker_mode");
+  if (mode !== "paper" && mode !== "live") {
+    return { error: "Invalid broker mode." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase is not configured." };
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  if (mode === "live") {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("real_money_unlocked")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!profile?.real_money_unlocked) {
+      return {
+        error:
+          "Live trading is locked. Complete all paper-trading performance criteria first.",
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ broker_mode: mode })
+    .eq("user_id", user.id);
+
+  if (error) return { error: error.message };
+  revalidatePath("/settings");
   return { saved: true };
 }

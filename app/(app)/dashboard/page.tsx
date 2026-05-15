@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile, DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView } from "@/lib/portfolio";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PreTradeChecklist } from "@/components/risk/pre-trade-checklist";
 import { ExplainButton } from "@/components/ai/explain-button";
+import { PortfolioChart } from "@/components/portfolio/portfolio-chart";
 import { formatMoney, formatPct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +22,26 @@ export default async function DashboardPage() {
   const dailyLossLimitPct =
     profile.daily_loss_limit_pct ?? DEFAULT_PROFILE.daily_loss_limit_pct;
 
-  const holdings = await getHoldingsView();
+  const supabase = await createSupabaseServerClient();
+  const [holdingsResult, snapshotResult] = await Promise.all([
+    getHoldingsView(),
+    supabase
+      ? supabase
+          .from("portfolio_snapshots")
+          .select("snapshot_date, total_value")
+          .eq("user_id", session.userId)
+          .order("snapshot_date", { ascending: true })
+          .limit(90)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const holdings = holdingsResult;
+  const snapshots = (
+    (snapshotResult as { data: Array<{ snapshot_date: string; total_value: number }> | null }).data ?? []
+  ).map((s) => ({
+    snapshot_date: String(s.snapshot_date),
+    total_value: Number(s.total_value),
+  }));
   const totalMv = holdings.total_market_value;
   const totalPnl = holdings.total_open_pnl;
   const pnlPct =
@@ -162,6 +183,9 @@ export default async function DashboardPage() {
           No open positions. Click <strong>New trade</strong> to enter your first paper trade.
         </div>
       )}
+
+      {/* Portfolio performance chart */}
+      <PortfolioChart snapshots={snapshots} accountSize={accountSize} />
     </div>
   );
 }

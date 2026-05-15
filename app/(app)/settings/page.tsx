@@ -1,12 +1,18 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile } from "@/lib/profile";
+import { getPaperTradingCriteria } from "@/lib/performance";
 import { SettingsForm } from "./_components/settings-form";
+import { PerformanceScorecard } from "@/components/performance/performance-scorecard";
 
 export const metadata = { title: "Settings · TradePilot" };
 
 export default async function SettingsPage() {
   const session = await getUserAndProfile();
   if (!session) redirect("/login?next=/settings");
+
+  const criteria = await getPaperTradingCriteria(
+    session.profile.account_size_initial,
+  );
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 md:py-14">
@@ -22,19 +28,28 @@ export default async function SettingsPage() {
           helper budgets against the monthly token cap.
         </p>
       </header>
-      <SettingsForm
-        email={session.email ?? ""}
-        initial={{
-          account_size_initial: session.profile.account_size_initial,
-          max_risk_per_trade_pct: session.profile.max_risk_per_trade_pct,
-          daily_loss_limit_pct: session.profile.daily_loss_limit_pct,
-          ai_token_budget_monthly: session.profile.ai_token_budget_monthly,
-          broker_mode: session.profile.broker_mode ?? "paper",
-          real_money_unlocked: session.profile.real_money_unlocked ?? false,
-          agent_enabled: session.profile.agent_enabled ?? false,
-          agent_daily_capital_limit: session.profile.agent_daily_capital_limit ?? 500,
-        }}
-      />
+      <div className="space-y-10">
+        <SettingsForm
+          email={session.email ?? ""}
+          initial={{
+            account_size_initial: session.profile.account_size_initial,
+            max_risk_per_trade_pct: session.profile.max_risk_per_trade_pct,
+            daily_loss_limit_pct: session.profile.daily_loss_limit_pct,
+            ai_token_budget_monthly: session.profile.ai_token_budget_monthly,
+            broker_mode: session.profile.broker_mode ?? "paper",
+            real_money_unlocked: session.profile.real_money_unlocked ?? false,
+            agent_enabled: session.profile.agent_enabled ?? false,
+            agent_daily_capital_limit:
+              session.profile.agent_daily_capital_limit ?? 500,
+          }}
+        />
+        <div className="border-t border-border/40 pt-8">
+          <PerformanceScorecard
+            criteria={criteria}
+            realMoneyUnlocked={session.profile.real_money_unlocked ?? false}
+          />
+        </div>
+      </div>
     </div>
   );
 }
