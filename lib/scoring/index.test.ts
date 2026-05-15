@@ -156,10 +156,89 @@ describe("scoreWatchlistItem — R-multiple", () => {
 });
 
 describe("scoreWatchlistItem — liquidity", () => {
-  it("always 0.5 neutral, dataAvailable false (no bars data)", () => {
+  it("no avgDollarVolume → 0.5 neutral, dataAvailable false", () => {
     const r = scoreWatchlistItem({ ...base });
     expect(r.liquidity.value).toBe(0.5);
     expect(r.liquidity.dataAvailable).toBe(false);
+  });
+
+  it("≥$100M avg dollar vol → 1.0 (very liquid)", () => {
+    const r = scoreWatchlistItem({ ...base, avgDollarVolume: 500_000_000 });
+    expect(r.liquidity.value).toBe(1.0);
+    expect(r.liquidity.dataAvailable).toBe(true);
+  });
+
+  it("$50M avg dollar vol → 0.7 (liquid)", () => {
+    const r = scoreWatchlistItem({ ...base, avgDollarVolume: 50_000_000 });
+    expect(r.liquidity.value).toBe(0.7);
+  });
+
+  it("$2M avg dollar vol → 0.4 (tradeable)", () => {
+    const r = scoreWatchlistItem({ ...base, avgDollarVolume: 2_000_000 });
+    expect(r.liquidity.value).toBe(0.4);
+  });
+
+  it("$500K avg dollar vol → 0.1 (illiquid)", () => {
+    const r = scoreWatchlistItem({ ...base, avgDollarVolume: 500_000 });
+    expect(r.liquidity.value).toBe(0.1);
+  });
+});
+
+describe("scoreWatchlistItem — longTrend (SMA50/200)", () => {
+  it("no SMA data → 0.5 neutral, dataAvailable false", () => {
+    const r = scoreWatchlistItem({ ...base });
+    expect(r.longTrend.value).toBe(0.5);
+    expect(r.longTrend.dataAvailable).toBe(false);
+  });
+
+  it("price > SMA50 > SMA200 → 1.0 (strong uptrend)", () => {
+    const r = scoreWatchlistItem({ ...base, price: 110, sma50: 105, sma200: 95 });
+    expect(r.longTrend.value).toBe(1.0);
+    expect(r.longTrend.dataAvailable).toBe(true);
+  });
+
+  it("price > SMA50, SMA50 < SMA200 → 0.6 (recovering)", () => {
+    const r = scoreWatchlistItem({ ...base, price: 110, sma50: 105, sma200: 115 });
+    expect(r.longTrend.value).toBe(0.6);
+  });
+
+  it("price < SMA50, SMA50 > SMA200 → 0.4 (pullback)", () => {
+    const r = scoreWatchlistItem({ ...base, price: 95, sma50: 105, sma200: 95 });
+    expect(r.longTrend.value).toBe(0.4);
+  });
+
+  it("price < SMA50 < SMA200 → 0.1 (downtrend)", () => {
+    const r = scoreWatchlistItem({ ...base, price: 85, sma50: 95, sma200: 110 });
+    expect(r.longTrend.value).toBe(0.1);
+  });
+});
+
+describe("scoreWatchlistItem — rsi", () => {
+  it("no RSI data → 0.5 neutral, dataAvailable false", () => {
+    const r = scoreWatchlistItem({ ...base });
+    expect(r.rsi.value).toBe(0.5);
+    expect(r.rsi.dataAvailable).toBe(false);
+  });
+
+  it("RSI < 30 → 0.65 (oversold)", () => {
+    const r = scoreWatchlistItem({ ...base, rsi14: 25 });
+    expect(r.rsi.value).toBe(0.65);
+    expect(r.rsi.dataAvailable).toBe(true);
+  });
+
+  it("RSI 30–50 → 0.5 (neutral-bearish)", () => {
+    const r = scoreWatchlistItem({ ...base, rsi14: 42 });
+    expect(r.rsi.value).toBe(0.5);
+  });
+
+  it("RSI 50–70 → 0.8 (neutral-bullish)", () => {
+    const r = scoreWatchlistItem({ ...base, rsi14: 62 });
+    expect(r.rsi.value).toBe(0.8);
+  });
+
+  it("RSI > 70 → 0.2 (overbought)", () => {
+    const r = scoreWatchlistItem({ ...base, rsi14: 78 });
+    expect(r.rsi.value).toBe(0.2);
   });
 });
 
@@ -199,8 +278,8 @@ describe("scoreWatchlistItem — eventRisk", () => {
 
 describe("scoreWatchlistItem — total", () => {
   it("all-neutral inputs (zero range, no R, no earnings) → total 47.5", () => {
-    // trend=0.5, vol=1.0, rMultiple=0, liquidity=0.5, eventRisk=0.5
-    // 0.5*0.25 + 1.0*0.20 + 0*0.25 + 0.5*0.10 + 0.5*0.20 = 0.475 → 47.5
+    // trend=0.5, vol=1.0, rMultiple=0, liquidity=0.5, eventRisk=0.5, longTrend=0.5, rsi=0.5
+    // 0.5*0.20 + 1.0*0.15 + 0*0.20 + 0.5*0.10 + 0.5*0.15 + 0.5*0.12 + 0.5*0.08 = 0.475 → 47.5
     const r = scoreWatchlistItem({
       ...base,
       prevClose: 100,
@@ -231,8 +310,8 @@ describe("scoreWatchlistItem — total", () => {
       targetPrice: 130,
       daysToEarnings: 2,
     });
-    // 20% weight × 1.0 difference = 20 points
-    expect(safe.total - earningsWeek.total).toBeCloseTo(20, 1);
+    // eventRisk weight is 15% × 1.0 difference = 15 points
+    expect(safe.total - earningsWeek.total).toBeCloseTo(15, 1);
   });
 
   it("scores visibly differ between a strong and weak setup", () => {
@@ -276,9 +355,9 @@ describe("scoreWatchlistItem — total", () => {
 });
 
 describe("scoreMomentum", () => {
-  it("all-neutral inputs (zero range, no earnings) → momentum 67.5", () => {
-    // trend=0.5, vol=1.0, eventRisk=0.5
-    // 0.5*0.45 + 1.0*0.35 + 0.5*0.20 = 0.225 + 0.35 + 0.10 = 0.675 → 67.5
+  it("all-neutral inputs (zero range, no earnings, no SMA/RSI) → momentum 62.5", () => {
+    // trend=0.5, vol=1.0, eventRisk=0.5, longTrend=0.5, rsi=0.5
+    // 0.5*0.35 + 1.0*0.25 + 0.5*0.20 + 0.5*0.12 + 0.5*0.08 = 0.625 → 62.5
     const r = scoreMomentum({
       price: 100,
       prevClose: 100,
@@ -286,9 +365,11 @@ describe("scoreMomentum", () => {
       low: 100,
       daysToEarnings: null,
     });
-    expect(r.momentum).toBeCloseTo(67.5, 1);
+    expect(r.momentum).toBeCloseTo(62.5, 1);
     expect(r.breakdown.trend.value).toBeCloseTo(0.5);
     expect(r.breakdown.eventRisk.value).toBe(0.5);
+    expect(r.breakdown.longTrend.value).toBe(0.5);
+    expect(r.breakdown.rsi.value).toBe(0.5);
   });
 
   it("earnings in 2 days drops momentum by 20 (eventRisk weight)", () => {

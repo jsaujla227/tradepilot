@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getQuotesMap } from "@/lib/finnhub/data";
 import { getEarningsContext } from "@/lib/finnhub/context";
+import { getIndicators } from "@/lib/massive/indicators";
+import { getPreviousClose } from "@/lib/massive/data";
 import { scoreWatchlistItem } from "@/lib/scoring";
 import { type ScoredWatchlistItem, WatchlistTable } from "./_components/watchlist-table";
 import { AddWatchlistForm } from "./_components/add-watchlist-form";
@@ -37,25 +39,42 @@ export default async function WatchlistPage() {
     metaRows.map((r) => [r.ticker as string, r.sector as string | null]),
   );
 
-  // Fetch live quotes (Upstash 60 s cache) and cached earnings context.
-  // Earnings cache is warmed by the daily context-refresh cron, so this is
-  // essentially a Redis read for each ticker.
+  // Fetch live quotes (Upstash 60 s cache), earnings context, and technical
+  // indicators. Indicator + earnings caches are warmed by the context-refresh
+  // cron — cache misses fall through to a live fetch. All vendor calls are
+  // best-effort: failures return null and the score degrades gracefully.
   const tickers = items.map((i) => i.ticker as string);
-  const [quotesMap, earningsList] = await Promise.all([
+  const [quotesMap, earningsList, indicatorsList, prevCloseList] = await Promise.all([
     tickers.length > 0
       ? getQuotesMap(tickers)
       : Promise.resolve({} as Awaited<ReturnType<typeof getQuotesMap>>),
-    Promise.all(tickers.map((t) => getEarningsContext(t))),
+    Promise.all(tickers.map((t) => getEarningsContext(t).catch(() => null))),
+    Promise.all(
+      tickers.map((t) =>
+        getIndicators(t).catch(() => ({ sma50: null, sma200: null, rsi14: null })),
+      ),
+    ),
+    Promise.all(
+      tickers.map((t) => getPreviousClose(t).catch(() => ({ bar: null, cacheHit: false }))),
+    ),
   ]);
   type Earnings = Awaited<ReturnType<typeof getEarningsContext>>;
   const earningsMap = new Map<string, Earnings>(
     tickers.map((t, i) => [t, earningsList[i] ?? null]),
   );
+  const indicatorsMap = new Map(tickers.map((t, i) => [t, indicatorsList[i]!]));
+  const prevCloseMap = new Map(tickers.map((t, i) => [t, prevCloseList[i]!.bar]));
 
   const scored: ScoredWatchlistItem[] = items.map((item) => {
     const ticker = item.ticker as string;
     const quote = quotesMap[ticker] ?? null;
     const earnings = earningsMap.get(ticker) ?? null;
+    const indicators = indicatorsMap.get(ticker);
+    const prevCloseBar = prevCloseMap.get(ticker) ?? null;
+    const avgDollarVolume =
+      prevCloseBar != null
+        ? prevCloseBar.volume * (prevCloseBar.vwap ?? prevCloseBar.close)
+        : null;
     const score = quote
       ? scoreWatchlistItem({
           price: quote.price,
@@ -69,6 +88,10 @@ export default async function WatchlistPage() {
           targetPrice:
             item.target_price != null ? Number(item.target_price) : null,
           daysToEarnings: earnings?.daysUntil ?? null,
+          avgDollarVolume,
+          sma50: indicators?.sma50 ?? null,
+          sma200: indicators?.sma200 ?? null,
+          rsi14: indicators?.rsi14 ?? null,
         })
       : null;
 
@@ -94,8 +117,9 @@ export default async function WatchlistPage() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">My watchlist</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Score = trend ×25% + volatility ×20% + R-multiple ×25% + liquidity
-          ×10% + event risk ×20%. Click any input row to see the math.
+          Score = trend ×20% + volatility ×15% + R-multiple ×20% + liquidity
+          ×10% + event risk ×15% + long trend ×12% + RSI ×8%. Click any input
+          row to see the math.
         </p>
       </div>
 
