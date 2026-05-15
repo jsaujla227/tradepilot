@@ -6,6 +6,7 @@ import { ExplainButton } from "@/components/ai/explain-button";
 import { formatMoney, formatPct } from "@/lib/format";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AlertDismissButton } from "./_components/alert-dismiss-button";
+import { Sparkline } from "@/components/charts/sparkline";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Dashboard · TradePilot" };
@@ -30,6 +31,25 @@ export default async function DashboardPage() {
     holdings.total_cost_basis > 0 && totalPnl != null
       ? (totalPnl / holdings.total_cost_basis) * 100
       : null;
+
+  // Last 30 days of equity snapshots for the dashboard sparkline
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const sparkSince = thirtyDaysAgo.toISOString().slice(0, 10);
+  const { data: sparkRows } = supabase
+    ? await supabase
+        .from("portfolio_snapshots")
+        .select("snapshot_date, total_value")
+        .eq("user_id", session.userId)
+        .gte("snapshot_date", sparkSince)
+        .order("snapshot_date", { ascending: true })
+        .limit(30)
+    : { data: [] };
+  const sparkData = (sparkRows ?? []) as { snapshot_date: string; total_value: number }[];
+  const sparkIsUp =
+    sparkData.length >= 2
+      ? sparkData[sparkData.length - 1]!.total_value >= sparkData[0]!.total_value
+      : true;
 
   // Fetch today's undismissed position alerts
   const today = new Date().toISOString().slice(0, 10);
@@ -129,6 +149,14 @@ export default async function DashboardPage() {
           }
         />
       </div>
+
+      {/* Equity sparkline */}
+      {sparkData.length >= 2 && (
+        <section className="rounded-lg border border-border bg-card/50 px-4 pt-3 pb-1">
+          <p className="text-xs text-muted-foreground mb-1">30-day equity</p>
+          <Sparkline data={sparkData} isUp={sparkIsUp} />
+        </section>
+      )}
 
       {/* Holdings summary */}
       {holdings.holdings.length > 0 && (

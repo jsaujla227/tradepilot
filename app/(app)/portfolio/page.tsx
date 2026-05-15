@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
-import { getUserAndProfile } from "@/lib/profile";
+import { getUserAndProfile, DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView, getRecentTransactions } from "@/lib/portfolio";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { HoldingsTable } from "./_components/holdings-table";
 import { AddTransactionForm } from "./_components/add-transaction-form";
 import { TransactionsList } from "./_components/transactions-list";
-import { formatPct } from "@/lib/format";
+import { EquityCurve } from "./_components/equity-curve";
+import { formatPct, formatMoney } from "@/lib/format";
 
 export const metadata = { title: "Portfolio · TradePilot" };
 
@@ -19,10 +20,29 @@ export default async function PortfolioPage() {
 
   const supabase = await createSupabaseServerClient();
 
-  const [holdingsView, transactions] = await Promise.all([
+  // Last 90 days of daily equity snapshots for the chart
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+  const sinceDate = ninetyDaysAgo.toISOString().slice(0, 10);
+
+  const [holdingsView, transactions, snapshotResult] = await Promise.all([
     getHoldingsView(),
     getRecentTransactions(50),
+    supabase
+      ? supabase
+          .from("portfolio_snapshots")
+          .select("snapshot_date, total_value")
+          .eq("user_id", session.userId)
+          .gte("snapshot_date", sinceDate)
+          .order("snapshot_date", { ascending: true })
+          .limit(90)
+      : Promise.resolve({ data: null }),
   ]);
+
+  const snapshots = (snapshotResult.data ?? []) as {
+    snapshot_date: string;
+    total_value: number;
+  }[];
 
   // Sector concentration: warn when any sector > 25% of priced holdings
   const tickers = holdingsView.holdings.map((h) => h.ticker);
@@ -79,6 +99,24 @@ export default async function PortfolioPage() {
           </a>
         </div>
       </header>
+
+      {/* Equity curve */}
+      <section className="rounded-md border border-border bg-card/60 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Equity curve — last 90 days
+          </p>
+          {snapshots.length >= 2 && (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {formatMoney(snapshots[0]!.total_value)} → {formatMoney(snapshots[snapshots.length - 1]!.total_value)}
+            </span>
+          )}
+        </div>
+        <EquityCurve
+          snapshots={snapshots}
+          initialAccountSize={session.profile.account_size_initial ?? DEFAULT_PROFILE.account_size_initial}
+        />
+      </section>
 
       {concentratedSectors.length > 0 && (
         <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 space-y-1">
