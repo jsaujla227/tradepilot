@@ -9,6 +9,14 @@
       "schedule": "35 13 * * 1-5"
     },
     {
+      "path": "/api/cron/agent-trade",
+      "schedule": "5 14 * * 1-5"
+    },
+    {
+      "path": "/api/cron/position-monitor",
+      "schedule": "30 19 * * 1-5"
+    },
+    {
       "path": "/api/cron/snapshot",
       "schedule": "0 23 * * *"
     },
