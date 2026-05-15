@@ -23,6 +23,25 @@ import {
 } from "@/app/(app)/orders/actions";
 import { TickerContextPanel } from "@/components/ticker/ticker-context-panel";
 
+type PatternMatch = {
+  pattern_type: "winning" | "losing" | "neutral";
+  description: string;
+  win_rate: number;
+  expectancy: number;
+  sample_count: number;
+  match_reason: string;
+};
+
+type PreTradeVerdict = {
+  matched_patterns: PatternMatch[];
+  assessment: {
+    confidence: "low" | "medium" | "high";
+    primary_risk: string;
+    reasoning: string;
+  } | null;
+  total_patterns_in_library: number;
+};
+
 type Props = {
   accountSize: number;
   maxRiskPct: number;
@@ -39,11 +58,17 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
 
   // Controlled fields that drive live calculations
   const [ticker, setTicker] = useState("");
+  const [side, setSide] = useState<"buy" | "sell">("buy");
   const [entry, setEntry] = useState("");
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
   const [qty, setQty] = useState("");
   const qtyTouched = useRef(false);
+
+  // Pre-trade pattern verdict
+  const [patternVerdict, setPatternVerdict] = useState<PreTradeVerdict | null>(null);
+  const [verdictPending, setVerdictPending] = useState(false);
+  const verdictTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live outputs
   const [psOut, setPsOut] = useState<PositionSizeOutput | null>(null);
@@ -97,6 +122,61 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
     }
   }, [entry, qty, psOut?.shares]);
 
+  // Debounced pre-trade pattern fetch
+  useEffect(() => {
+    if (verdictTimer.current) clearTimeout(verdictTimer.current);
+
+    const e = parseFloat(entry);
+    const s = parseFloat(stop);
+    const t = parseFloat(target);
+    if (!ticker || !rmOut || !(e > 0) || !(s > 0) || !(t > 0)) {
+      setPatternVerdict(null);
+      return;
+    }
+
+    verdictTimer.current = setTimeout(async () => {
+      setVerdictPending(true);
+      try {
+        const direction = side === "buy" ? "long" : "short";
+        const res = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "pre-trade",
+            prompt: `Evaluate this setup for ${ticker}: ${direction} entry $${e}, stop $${s}, target $${t}. R-multiple ${rmOut.plannedR.toFixed(2)}.`,
+            dataProvided: {
+              ticker,
+              direction,
+              entry: e,
+              stop: s,
+              target: t,
+              planned_r: rmOut.plannedR,
+            },
+            setupDirection: direction,
+            setupRAtEntry: rmOut.plannedR,
+          }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.matched_patterns !== undefined) {
+          setPatternVerdict({
+            matched_patterns: data.matched_patterns,
+            assessment: data.assessment ?? null,
+            total_patterns_in_library: data.total_patterns_in_library ?? 0,
+          });
+        }
+      } catch {
+        // non-critical — verdict panel simply won't show
+      } finally {
+        setVerdictPending(false);
+      }
+    }, 800);
+
+    return () => {
+      if (verdictTimer.current) clearTimeout(verdictTimer.current);
+    };
+  }, [ticker, side, entry, stop, target, rmOut]);
+
   // Close dialog on successful fill
   useEffect(() => {
     if (state.orderId) {
@@ -106,6 +186,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
 
   function resetForm() {
     setTicker("");
+    setSide("buy");
     setEntry("");
     setStop("");
     setTarget("");
@@ -114,6 +195,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
     setPsOut(null);
     setRmOut(null);
     setLsOut(null);
+    setPatternVerdict(null);
   }
 
   // Proposed notional (entry × qty) drives sector-exposure projection.
@@ -179,7 +261,12 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Side</label>
-              <select name="side" className={INPUT}>
+              <select
+                name="side"
+                value={side}
+                onChange={(e) => setSide(e.target.value as "buy" | "sell")}
+                className={INPUT}
+              >
                 <option value="buy">Buy (long)</option>
                 <option value="sell">Sell (short)</option>
               </select>
@@ -298,6 +385,122 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
                     ))}
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Pre-trade pattern verdict */}
+          {(verdictPending || patternVerdict) && (
+            <div className="rounded-md border border-border bg-card/60 p-3 space-y-2 text-xs">
+              <p className="font-medium text-muted-foreground uppercase tracking-wide">
+                Pattern library match
+                {verdictPending && (
+                  <span className="ml-2 normal-case font-normal text-muted-foreground/60">
+                    analysing…
+                  </span>
+                )}
+                {!verdictPending && patternVerdict && (
+                  <span className="ml-2 normal-case font-normal text-muted-foreground/60">
+                    {patternVerdict.total_patterns_in_library} pattern
+                    {patternVerdict.total_patterns_in_library !== 1 ? "s" : ""} in library
+                  </span>
+                )}
+              </p>
+
+              {!verdictPending && patternVerdict && (
+                <>
+                  {patternVerdict.matched_patterns.length === 0 ? (
+                    <p className="text-muted-foreground/70">
+                      No matching patterns found yet — keep logging trades to build your library.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {patternVerdict.matched_patterns.map((pm, i) => (
+                        <div
+                          key={i}
+                          className={`rounded border px-2 py-1.5 space-y-0.5 ${
+                            pm.pattern_type === "winning"
+                              ? "border-green-500/30 bg-green-500/5"
+                              : pm.pattern_type === "losing"
+                                ? "border-red-500/30 bg-red-500/5"
+                                : "border-border"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                pm.pattern_type === "winning"
+                                  ? "bg-green-500/20 text-green-400"
+                                  : pm.pattern_type === "losing"
+                                    ? "bg-red-500/20 text-red-400"
+                                    : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {pm.pattern_type}
+                            </span>
+                            <span className="text-foreground/80">{pm.description}</span>
+                          </div>
+                          <div className="flex gap-x-4 tabular-nums text-muted-foreground">
+                            <span>
+                              Win rate:{" "}
+                              <b className="text-foreground/80">
+                                {(pm.win_rate * 100).toFixed(0)}%
+                              </b>
+                            </span>
+                            <span>
+                              Expectancy:{" "}
+                              <b
+                                className={
+                                  pm.expectancy > 0 ? "text-green-400" : "text-red-400"
+                                }
+                              >
+                                {pm.expectancy > 0 ? "+" : ""}
+                                {pm.expectancy.toFixed(2)}R
+                              </b>
+                            </span>
+                            <span>
+                              Samples: <b className="text-foreground/80">{pm.sample_count}</b>
+                            </span>
+                          </div>
+                          <p className="text-muted-foreground/70 italic">{pm.match_reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {patternVerdict.assessment && (
+                    <div
+                      className={`rounded border px-2 py-1.5 space-y-0.5 ${
+                        patternVerdict.assessment.confidence === "high"
+                          ? "border-amber-500/30 bg-amber-500/5"
+                          : "border-border"
+                      }`}
+                    >
+                      <p className="font-medium text-muted-foreground">
+                        AI assessment —{" "}
+                        <span
+                          className={
+                            patternVerdict.assessment.confidence === "high"
+                              ? "text-amber-400"
+                              : patternVerdict.assessment.confidence === "medium"
+                                ? "text-yellow-400"
+                                : "text-muted-foreground"
+                          }
+                        >
+                          {patternVerdict.assessment.confidence} confidence
+                        </span>
+                      </p>
+                      <p className="text-muted-foreground/80">
+                        {patternVerdict.assessment.reasoning}
+                      </p>
+                      {patternVerdict.assessment.primary_risk && (
+                        <p className="text-red-400/80">
+                          Primary risk: {patternVerdict.assessment.primary_risk}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

@@ -345,6 +345,7 @@ export async function POST(req: NextRequest) {
           mode,
           assessment: validated.data,
           matched_patterns: (augmentedData as Record<string, unknown>).matched_patterns ?? [],
+          total_patterns_in_library: (augmentedData as Record<string, unknown>).total_patterns_in_library ?? 0,
           usage: {
             inputTokens,
             outputTokens,
