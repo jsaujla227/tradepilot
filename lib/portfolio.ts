@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getQuotesMap, type Quote } from "@/lib/finnhub/data";
+import { portfolioHeat, type PortfolioHeatOutput } from "@/lib/risk";
 
 export type Side = "buy" | "sell";
 export type TxSource = "manual" | "csv" | "alpaca";
@@ -137,6 +138,79 @@ export async function getHoldingsView(): Promise<HoldingsView> {
     priced_count,
     quotes_attempted: true,
   };
+}
+
+/**
+ * Most recent planned stop per ticker, drawn from the user's pre-trade
+ * checklists. This is the working stop a position is held against. Tickers
+ * with no checklist on file are simply absent from the result.
+ */
+async function getLatestStops(
+  tickers: string[],
+): Promise<Record<string, number>> {
+  if (tickers.length === 0) return {};
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return {};
+  const { data, error } = await supabase
+    .from("trade_checklists")
+    .select("ticker, stop, created_at")
+    .in("ticker", tickers)
+    .order("created_at", { ascending: false });
+  if (error || !data) return {};
+
+  const stops: Record<string, number> = {};
+  for (const row of data) {
+    const ticker = String(row.ticker);
+    if (ticker in stops) continue; // ordered desc — first row is most recent
+    const stop = Number(row.stop);
+    if (Number.isFinite(stop) && stop > 0) stops[ticker] = stop;
+  }
+  return stops;
+}
+
+/**
+ * Portfolio heat: total open R-at-risk across every open position, measured
+ * against each position's most recent planned stop. Returns null when there
+ * are no open positions or the account size / ceiling is unusable.
+ */
+export async function getPortfolioHeat(
+  view: HoldingsView,
+  accountSize: number,
+  maxHeatPct: number,
+): Promise<PortfolioHeatOutput | null> {
+  const sizable = view.holdings.filter(
+    (h) => h.qty !== 0 && h.avg_cost > 0,
+  );
+  if (sizable.length === 0) return null;
+  if (!Number.isFinite(accountSize) || accountSize <= 0) return null;
+  if (!Number.isFinite(maxHeatPct) || maxHeatPct <= 0 || maxHeatPct >= 100) {
+    return null;
+  }
+
+  const stops = await getLatestStops(sizable.map((h) => h.ticker));
+
+  const positions = sizable.map((h) => {
+    const rawStop = stops[h.ticker];
+    // A stop equal to entry cannot define risk — treat it as none on file.
+    const stop =
+      rawStop !== undefined && rawStop > 0 && rawStop !== h.avg_cost
+        ? rawStop
+        : null;
+    return {
+      ticker: h.ticker,
+      shares: Math.abs(h.qty),
+      entry: h.avg_cost,
+      stop,
+      price: h.price ?? undefined,
+      direction: (h.qty >= 0 ? "long" : "short") as "long" | "short",
+    };
+  });
+
+  try {
+    return portfolioHeat({ positions, accountSize, maxHeatPct });
+  } catch {
+    return null;
+  }
 }
 
 export async function getRecentTransactions(

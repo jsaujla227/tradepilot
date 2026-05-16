@@ -65,6 +65,7 @@ export function SettingsForm({
     account_size_initial: number;
     max_risk_per_trade_pct: number;
     daily_loss_limit_pct: number;
+    max_portfolio_heat_pct: number;
     ai_token_budget_monthly: number;
     broker_mode: "paper" | "live";
     real_money_unlocked: boolean;
@@ -113,6 +114,15 @@ export function SettingsForm({
         hint="Realized + open loss threshold that trips the circuit breaker (M7)."
         name="daily_loss_limit_pct"
         defaultValue={initial.daily_loss_limit_pct}
+        step="any"
+        min={0.01}
+        suffix="%"
+      />
+      <Field
+        label="Max portfolio heat"
+        hint="Ceiling on total open risk-at-stop across all positions as a % of account size. The portfolio page flags heat as it approaches this."
+        name="max_portfolio_heat_pct"
+        defaultValue={initial.max_portfolio_heat_pct}
         step="any"
         min={0.01}
         suffix="%"

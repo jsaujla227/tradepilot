@@ -8,6 +8,7 @@ export type Profile = {
   account_size_initial: number;
   max_risk_per_trade_pct: number;
   daily_loss_limit_pct: number;
+  max_portfolio_heat_pct: number;
   ai_token_budget_monthly: number;
   // M13: broker abstraction + agent config
   broker_mode: "paper" | "live";
@@ -22,6 +23,7 @@ export const DEFAULT_PROFILE = {
   account_size_initial: 10000,
   max_risk_per_trade_pct: 1,
   daily_loss_limit_pct: 3,
+  max_portfolio_heat_pct: 6,
   ai_token_budget_monthly: 100000,
   broker_mode: "paper" as const,
   real_money_unlocked: false,
@@ -70,6 +72,7 @@ export type ProfileUpdate = {
   account_size_initial: number;
   max_risk_per_trade_pct: number;
   daily_loss_limit_pct: number;
+  max_portfolio_heat_pct: number;
   ai_token_budget_monthly: number;
   agent_enabled: boolean;
   agent_daily_capital_limit: number;

@@ -250,3 +250,122 @@ export function dailyLossBreached(input: DailyLossInput): DailyLossOutput {
 
   return { totalToday, limit, breached, remaining };
 }
+
+// -- portfolioHeat --------------------------------------------------------
+
+export type HeatPositionInput = {
+  ticker: string;
+  /** Absolute share count of the open position. */
+  shares: number;
+  /** Average entry price. */
+  entry: number;
+  /** Planned stop. null when no stop is on file for the position. */
+  stop: number | null;
+  /** Live price; the open-risk basis. Falls back to entry when omitted. */
+  price?: number;
+  /** Position direction. When omitted it is inferred from stop vs entry —
+   *  pass it explicitly for open positions whose stop may sit in profit. */
+  direction?: Direction;
+};
+
+export type HeatPositionRisk = {
+  ticker: string;
+  hasStop: boolean;
+  /** Dollars at risk from the open-risk basis down to the stop; null when
+   *  no stop is on file. Never negative — a stop in profit reads as 0. */
+  riskAmount: number | null;
+  /** riskAmount as a percent of account size; null when no stop on file. */
+  riskPct: number | null;
+  direction: Direction | null;
+};
+
+export type PortfolioHeatInput = {
+  positions: HeatPositionInput[];
+  accountSize: number;
+  /** Ceiling for total open risk as a percent of account size. */
+  maxHeatPct: number;
+};
+
+export type PortfolioHeatOutput = {
+  positions: HeatPositionRisk[];
+  /** Sum of quantified per-position risk in dollars. */
+  totalRisk: number;
+  totalRiskPct: number;
+  /** Dollar ceiling: accountSize * maxHeatPct / 100. */
+  maxHeat: number;
+  /** Dollars of heat room left before the ceiling; 0 once breached. */
+  remaining: number;
+  breached: boolean;
+  /** Count of positions with no stop on file — risk not quantified. */
+  unquantifiedCount: number;
+};
+
+/**
+ * Aggregate "portfolio heat": the total open R-at-risk across every open
+ * position, measured from each position's open-risk basis (live price, or
+ * entry when no price is supplied) down to its stop. Positions with no stop
+ * on file are reported as unquantified rather than silently counted as zero.
+ */
+export function portfolioHeat(input: PortfolioHeatInput): PortfolioHeatOutput {
+  assertPositive(input.accountSize, "account size");
+  assertPositive(input.maxHeatPct, "max heat %");
+  if (input.maxHeatPct >= 100) {
+    throw new RiskError("max heat % must be less than 100", "invalid-input");
+  }
+
+  let totalRisk = 0;
+  let unquantifiedCount = 0;
+
+  const positions: HeatPositionRisk[] = input.positions.map((pos) => {
+    assertNonNegative(pos.shares, "shares");
+    assertPositive(pos.entry, "entry");
+    if (pos.price !== undefined) assertPositive(pos.price, "price");
+
+    if (pos.stop === null) {
+      unquantifiedCount += 1;
+      return {
+        ticker: pos.ticker,
+        hasStop: false,
+        riskAmount: null,
+        riskPct: null,
+        direction: null,
+      };
+    }
+
+    assertPositive(pos.stop, "stop");
+    if (pos.stop === pos.entry) {
+      throw new RiskError("stop must differ from entry", "entry-equals-stop");
+    }
+
+    const direction: Direction =
+      pos.direction ?? (pos.stop < pos.entry ? "long" : "short");
+    const basis = pos.price ?? pos.entry;
+    const perShareRisk =
+      direction === "long" ? basis - pos.stop : pos.stop - basis;
+    const riskAmount = Math.max(0, perShareRisk * pos.shares);
+    totalRisk += riskAmount;
+
+    return {
+      ticker: pos.ticker,
+      hasStop: true,
+      riskAmount,
+      riskPct: (riskAmount / input.accountSize) * 100,
+      direction,
+    };
+  });
+
+  const maxHeat = (input.accountSize * input.maxHeatPct) / 100;
+  const totalRiskPct = (totalRisk / input.accountSize) * 100;
+  const remaining = Math.max(0, maxHeat - totalRisk);
+  const breached = totalRisk >= maxHeat;
+
+  return {
+    positions,
+    totalRisk,
+    totalRiskPct,
+    maxHeat,
+    remaining,
+    breached,
+    unquantifiedCount,
+  };
+}

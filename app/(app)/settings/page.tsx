@@ -35,6 +35,7 @@ export default async function SettingsPage() {
             account_size_initial: session.profile.account_size_initial,
             max_risk_per_trade_pct: session.profile.max_risk_per_trade_pct,
             daily_loss_limit_pct: session.profile.daily_loss_limit_pct,
+            max_portfolio_heat_pct: session.profile.max_portfolio_heat_pct,
             ai_token_budget_monthly: session.profile.ai_token_budget_monthly,
             broker_mode: session.profile.broker_mode ?? "paper",
             real_money_unlocked: session.profile.real_money_unlocked ?? false,

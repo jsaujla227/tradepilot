@@ -1,8 +1,13 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile } from "@/lib/profile";
-import { getHoldingsView, getRecentTransactions } from "@/lib/portfolio";
+import {
+  getHoldingsView,
+  getRecentTransactions,
+  getPortfolioHeat,
+} from "@/lib/portfolio";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { HoldingsTable } from "./_components/holdings-table";
+import { PortfolioHeatCard } from "./_components/portfolio-heat-card";
 import { AddTransactionForm } from "./_components/add-transaction-form";
 import { TransactionsList } from "./_components/transactions-list";
 import { formatPct } from "@/lib/format";
@@ -36,6 +41,12 @@ export default async function PortfolioPage() {
         };
   const transactions =
     txSettled.status === "fulfilled" ? txSettled.value : [];
+
+  const heat = await getPortfolioHeat(
+    holdingsView,
+    session.profile.account_size_initial,
+    session.profile.max_portfolio_heat_pct,
+  );
 
   // Sector concentration: warn when any sector > 25% of priced holdings.
   // ticker_meta read is non-essential, so a failure should not break the page.
@@ -95,6 +106,13 @@ export default async function PortfolioPage() {
           </a>
         </div>
       </header>
+
+      {heat && (
+        <PortfolioHeatCard
+          heat={heat}
+          maxHeatPct={session.profile.max_portfolio_heat_pct}
+        />
+      )}
 
       {concentratedSectors.length > 0 && (
         <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 space-y-1">

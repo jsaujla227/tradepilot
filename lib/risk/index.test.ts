@@ -5,6 +5,7 @@ import {
   lossScenarios,
   concentrationLabel,
   dailyLossBreached,
+  portfolioHeat,
   RiskError,
 } from "./index";
 
@@ -280,6 +281,151 @@ describe("dailyLossBreached", () => {
         realizedToday: NaN,
         openPnL: 0,
       }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("portfolioHeat", () => {
+  it("sums open risk from entry when no price is supplied", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48 },
+        { ticker: "BBB", shares: 50, entry: 80, stop: 76 },
+      ],
+    });
+    // AAA: 2/sh * 100 = 200; BBB: 4/sh * 50 = 200
+    expect(out.totalRisk).toBe(400);
+    expect(out.totalRiskPct).toBeCloseTo(4);
+    expect(out.maxHeat).toBe(600);
+    expect(out.remaining).toBe(200);
+    expect(out.breached).toBe(false);
+    expect(out.unquantifiedCount).toBe(0);
+  });
+
+  it("uses live price as the open-risk basis when provided", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48, price: 55 },
+      ],
+    });
+    // risk from price 55 down to stop 48 = 7/sh * 100
+    expect(out.totalRisk).toBe(700);
+  });
+
+  it("clamps risk to zero when a long's stop is locked in above price", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        {
+          ticker: "AAA",
+          shares: 100,
+          entry: 50,
+          stop: 52,
+          price: 51,
+          direction: "long",
+        },
+      ],
+    });
+    expect(out.totalRisk).toBe(0);
+    expect(out.positions[0]!.riskAmount).toBe(0);
+    expect(out.positions[0]!.direction).toBe("long");
+  });
+
+  it("computes open risk for a short position", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 54, price: 50 },
+      ],
+    });
+    // short: stop 54 - price 50 = 4/sh * 100
+    expect(out.totalRisk).toBe(400);
+    expect(out.positions[0]!.direction).toBe("short");
+  });
+
+  it("respects an explicit direction for a long with a trailed stop", () => {
+    // Long position whose stop has trailed above entry: still long, and
+    // open risk is price down to stop — not the inferred "short" reading.
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        {
+          ticker: "AAA",
+          shares: 100,
+          entry: 50,
+          stop: 52,
+          price: 55,
+          direction: "long",
+        },
+      ],
+    });
+    expect(out.positions[0]!.direction).toBe("long");
+    expect(out.totalRisk).toBe(300); // (55 - 52) * 100
+  });
+
+  it("flags positions with no stop on file as unquantified", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48 },
+        { ticker: "BBB", shares: 50, entry: 80, stop: null },
+      ],
+    });
+    expect(out.unquantifiedCount).toBe(1);
+    expect(out.totalRisk).toBe(200);
+    const bbb = out.positions[1]!;
+    expect(bbb.hasStop).toBe(false);
+    expect(bbb.riskAmount).toBeNull();
+    expect(bbb.riskPct).toBeNull();
+  });
+
+  it("breaches when total risk reaches the ceiling", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 300, entry: 50, stop: 48 },
+      ],
+    });
+    // 2/sh * 300 = 600 = ceiling
+    expect(out.totalRisk).toBe(600);
+    expect(out.breached).toBe(true);
+    expect(out.remaining).toBe(0);
+  });
+
+  it("handles an empty portfolio", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [],
+    });
+    expect(out.totalRisk).toBe(0);
+    expect(out.breached).toBe(false);
+    expect(out.remaining).toBe(600);
+    expect(out.unquantifiedCount).toBe(0);
+  });
+
+  it("throws when a position's stop equals its entry", () => {
+    expect(() =>
+      portfolioHeat({
+        accountSize: 10000,
+        maxHeatPct: 6,
+        positions: [{ ticker: "AAA", shares: 100, entry: 50, stop: 50 }],
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on max heat >= 100%", () => {
+    expect(() =>
+      portfolioHeat({ accountSize: 10000, maxHeatPct: 100, positions: [] }),
     ).toThrow(RiskError);
   });
 });
