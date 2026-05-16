@@ -69,7 +69,9 @@ scripts/                 one-off scripts (admin context only)
 
 ## Out of scope (until explicitly asked)
 
-Backtesting, social features, real-money trading, public landing/marketing site, pricing page, study/course content, recommendation engine.
+Social features, public landing/marketing site, pricing page, study/course content, recommendation engine.
+
+Backtesting was greenlit and built as the B1-B9 initiative (`lib/backtest/*`, `/backtest`, `/strategies`). Real-money trading is gated behind the strategy lifecycle (paper -> live_small -> approved) with a hard small-size capital cap.
 
 ## Working agreement
 

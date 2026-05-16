@@ -8,19 +8,24 @@ read this cold and continue the work without losing context.
 
 ## NEXT ACTION
 
-The **Backtesting & Strategy-Validation initiative** is greenlit. The owner
-asked to build all 9 phases autonomously, then paused to continue in a co-work
-session.
+The **Backtesting & Strategy-Validation initiative is COMPLETE.** All 9 phases
+(B1-B9) are built, verified, and merged to `main` (PRs #19-#27; issues #10-#18
+closed). 184 tests pass; typecheck, lint, and build are green.
 
-**Resume at Phase B1 — Historical data foundation.** A complete, ready-to-build
-implementation spec for B1 is in the **"Phase B1 — implementation spec"**
-section below: exact file list, full migration SQL, function designs, the
-building blocks already in the repo, and the gotchas. No design work is needed
-— build it, verify, open a draft PR, merge, then move to B2.
+There is no pending backtesting work. The validation lifecycle is live:
 
-Status: B1 not started — no code written, nothing committed. (An empty local
-branch `claude/backtest-b1-historical-data` was created in a prior session but
-never pushed; ignore it and create a fresh branch.)
+- `/backtest` — run a single backtest or a walk-forward analysis.
+- `/strategies` — create a strategy, "Backtest & promote" (walk-forward gate),
+  "Move to paper trading", "Promote to live (small)" (paper gate), "Approve"
+  (long-term live gate + decay check). Each gate shows every criterion.
+- The `backfill-bars` and `paper-signals` crons populate `historical_bars`
+  and log forward paper/live equity daily.
+
+**Operational follow-up (not code):** trigger `POST /api/admin/backfill-bars`
+once to populate `historical_bars` — the engine has no bars to replay until a
+backfill runs. Migrations `0015`-`0018` are already applied to Supabase.
+
+The B1 implementation spec below is retained for historical reference only.
 
 ---
 

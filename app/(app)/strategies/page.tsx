@@ -6,6 +6,8 @@ import { paperRun, type PaperRun } from "@/lib/backtest/paper";
 import {
   STATUS_LABEL,
   evaluatePaperGate,
+  evaluateLiveGate,
+  detectDecay,
   type StrategyStatus,
   type GateResult,
 } from "@/lib/backtest/lifecycle";
@@ -14,6 +16,7 @@ import {
   backtestAndPromote,
   advanceStage,
   promoteToLive,
+  approveStrategy,
   rejectStrategy,
 } from "./actions";
 
@@ -23,18 +26,12 @@ export const metadata = { title: "Strategies · TradePilot" };
 type BacktestSnapshot = {
   from: string;
   to: string;
+  evaluatedAt?: string;
   error?: string;
   windows?: number;
   overfittingGap?: number;
   metrics?: BacktestMetrics;
   gate?: GateResult;
-};
-
-type LiveSnapshot = {
-  evaluatedAt?: string;
-  gate?: GateResult;
-  startedAt?: string;
-  capitalCap?: number;
 };
 
 type StrategyRow = {
@@ -46,7 +43,8 @@ type StrategyRow = {
   stage_metrics: {
     backtest?: BacktestSnapshot;
     paper?: { startedAt?: string };
-    live?: LiveSnapshot;
+    live?: { startedAt?: string; capitalCap?: number };
+    approval?: { approvedAt?: string };
   } | null;
   notes: string | null;
   created_at: string;
@@ -61,37 +59,25 @@ const STATUS_STYLE: Record<StrategyStatus, string> = {
   rejected: "bg-red-500/15 text-red-400",
 };
 
-function comparisonRows(
-  bt: BacktestMetrics | undefined,
-  paper: BacktestMetrics,
-): { label: string; backtest: string; paper: string }[] {
+function metricRows(
+  a: BacktestMetrics | undefined,
+  b: BacktestMetrics,
+): { label: string; a: string; b: string }[] {
   const pct = (v: number) => `${v.toFixed(2)}%`;
   return [
-    {
-      label: "Total return",
-      backtest: bt ? pct(bt.totalReturnPct) : "—",
-      paper: pct(paper.totalReturnPct),
-    },
-    {
-      label: "Sharpe",
-      backtest: bt ? bt.sharpe.toFixed(2) : "—",
-      paper: paper.sharpe.toFixed(2),
-    },
+    { label: "Total return", a: a ? pct(a.totalReturnPct) : "—", b: pct(b.totalReturnPct) },
+    { label: "Sharpe", a: a ? a.sharpe.toFixed(2) : "—", b: b.sharpe.toFixed(2) },
     {
       label: "Win rate",
-      backtest: bt ? `${bt.winRatePct.toFixed(0)}%` : "—",
-      paper: `${paper.winRatePct.toFixed(0)}%`,
+      a: a ? `${a.winRatePct.toFixed(0)}%` : "—",
+      b: `${b.winRatePct.toFixed(0)}%`,
     },
     {
       label: "Max drawdown",
-      backtest: bt ? pct(bt.maxDrawdownPct) : "—",
-      paper: pct(paper.maxDrawdownPct),
+      a: a ? pct(a.maxDrawdownPct) : "—",
+      b: pct(b.maxDrawdownPct),
     },
-    {
-      label: "Trades",
-      backtest: bt ? String(bt.tradeCount) : "—",
-      paper: String(paper.tradeCount),
-    },
+    { label: "Trades", a: a ? String(a.tradeCount) : "—", b: String(b.tradeCount) },
   ];
 }
 
@@ -110,6 +96,73 @@ function GateChecks({ gate }: { gate: GateResult }) {
   );
 }
 
+function ComparisonTable({
+  rightLabel,
+  rows,
+}: {
+  rightLabel: string;
+  rows: { label: string; a: string; b: string }[];
+}) {
+  return (
+    <table className="w-full text-[11px] tabular-nums">
+      <thead>
+        <tr className="text-muted-foreground">
+          <th className="text-left font-normal">Metric</th>
+          <th className="text-right font-normal">Backtest</th>
+          <th className="text-right font-normal">{rightLabel}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label}>
+            <td className="text-muted-foreground">{r.label}</td>
+            <td className="text-right">{r.a}</td>
+            <td className="text-right">{r.b}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Journey({ s }: { s: StrategyRow }) {
+  const sm = s.stage_metrics;
+  const steps = [
+    { label: "Created", date: s.created_at.slice(0, 10) },
+    sm?.backtest?.evaluatedAt
+      ? { label: "Backtested", date: sm.backtest.evaluatedAt }
+      : null,
+    sm?.paper?.startedAt
+      ? { label: "Paper trading", date: sm.paper.startedAt }
+      : null,
+    sm?.live?.startedAt
+      ? { label: "Live (small size)", date: sm.live.startedAt }
+      : null,
+    sm?.approval?.approvedAt
+      ? { label: "Approved", date: sm.approval.approvedAt }
+      : null,
+  ].filter((x): x is { label: string; date: string } => x !== null);
+
+  return (
+    <div className="rounded-md border border-border/50 bg-background/30 px-3 py-2">
+      <p className="text-[11px] font-medium text-muted-foreground mb-1">
+        Journey
+      </p>
+      <ol className="space-y-0.5">
+        {steps.map((step) => (
+          <li
+            key={step.label}
+            className="flex justify-between text-[11px] text-muted-foreground tabular-nums"
+          >
+            <span>{step.label}</span>
+            <span>{step.date}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export default async function StrategiesPage() {
   const supabase = await createSupabaseServerClient();
   if (!supabase) redirect("/login");
@@ -124,16 +177,20 @@ export default async function StrategiesPage() {
     .order("created_at", { ascending: false });
   const strategies = (data ?? []) as StrategyRow[];
 
-  // Live-compute the forward paper run for every strategy in the paper stage.
+  // Live-compute the forward run for paper and live_small strategies.
   const today = new Date().toISOString().slice(0, 10);
-  const paperRuns = new Map<string, PaperRun>();
+  const forwardRuns = new Map<string, PaperRun>();
   for (const s of strategies) {
-    if (s.status !== "paper") continue;
-    const startedAt = s.stage_metrics?.paper?.startedAt;
-    if (!startedAt) continue;
-    const bars = await getHistoricalBars(supabase, s.ticker, startedAt, today);
+    const start =
+      s.status === "paper"
+        ? s.stage_metrics?.paper?.startedAt
+        : s.status === "live_small"
+          ? s.stage_metrics?.live?.startedAt
+          : undefined;
+    if (!start) continue;
+    const bars = await getHistoricalBars(supabase, s.ticker, start, today);
     if (bars.length > 0) {
-      paperRuns.set(
+      forwardRuns.set(
         s.id,
         paperRun(bars, s.params?.fast ?? 50, s.params?.slow ?? 200),
       );
@@ -162,12 +219,29 @@ export default async function StrategiesPage() {
         <section className="space-y-3">
           {strategies.map((s) => {
             const snap = s.stage_metrics?.backtest;
-            const paperStartedAt = s.stage_metrics?.paper?.startedAt;
             const live = s.stage_metrics?.live;
-            const run = paperRuns.get(s.id);
-            const paperGate = run
-              ? evaluatePaperGate(run.metrics, run.barCount)
-              : null;
+            const run = forwardRuns.get(s.id);
+            const advanced =
+              s.status === "live_small" || s.status === "approved";
+
+            // Gate previews computed from the live forward run.
+            const paperGate =
+              s.status === "paper" && run
+                ? evaluatePaperGate(run.metrics, run.barCount)
+                : null;
+            const decay =
+              s.status === "live_small" && run && snap?.metrics
+                ? detectDecay(run.metrics, snap.metrics)
+                : null;
+            const liveGate =
+              s.status === "live_small" && run
+                ? evaluateLiveGate(
+                    run.metrics,
+                    run.barCount,
+                    decay?.decayed ?? false,
+                  )
+                : null;
+
             return (
               <div
                 key={s.id}
@@ -211,12 +285,11 @@ export default async function StrategiesPage() {
                   </div>
                 )}
 
-                {/* Paper run: backtest-expected vs paper-actual + paper gate */}
+                {/* Paper run */}
                 {s.status === "paper" && (
                   <div className="rounded-md border border-border/50 bg-background/30 px-3 py-2 space-y-1.5">
                     <p className="text-[11px] font-medium text-muted-foreground">
                       Backtest-expected vs paper-actual
-                      {paperStartedAt ? ` · paper since ${paperStartedAt}` : ""}
                     </p>
                     {!run ? (
                       <p className="text-[11px] text-muted-foreground">
@@ -225,32 +298,10 @@ export default async function StrategiesPage() {
                       </p>
                     ) : (
                       <>
-                        <table className="w-full text-[11px] tabular-nums">
-                          <thead>
-                            <tr className="text-muted-foreground">
-                              <th className="text-left font-normal">Metric</th>
-                              <th className="text-right font-normal">
-                                Backtest
-                              </th>
-                              <th className="text-right font-normal">
-                                Paper ({run.barCount}d)
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {comparisonRows(snap?.metrics, run.metrics).map(
-                              (r) => (
-                                <tr key={r.label}>
-                                  <td className="text-muted-foreground">
-                                    {r.label}
-                                  </td>
-                                  <td className="text-right">{r.backtest}</td>
-                                  <td className="text-right">{r.paper}</td>
-                                </tr>
-                              ),
-                            )}
-                          </tbody>
-                        </table>
+                        <ComparisonTable
+                          rightLabel={`Paper (${run.barCount}d)`}
+                          rows={metricRows(snap?.metrics, run.metrics)}
+                        />
                         {paperGate && (
                           <div className="border-t border-border/40 pt-1.5">
                             <p className="text-[11px] text-muted-foreground mb-0.5">
@@ -264,23 +315,58 @@ export default async function StrategiesPage() {
                   </div>
                 )}
 
-                {/* Live (small) evidence */}
-                {s.status === "live_small" && live && (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1">
+                {/* Live (small) run + decay + approval gate */}
+                {s.status === "live_small" && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1.5">
                     <p className="text-[11px] text-amber-300">
                       Live (small size)
-                      {live.startedAt ? ` since ${live.startedAt}` : ""} · hard
-                      capital cap{" "}
-                      <span className="font-mono">
-                        ${live.capitalCap ?? 0}
-                      </span>
+                      {live?.startedAt ? ` since ${live.startedAt}` : ""} ·
+                      hard capital cap{" "}
+                      <span className="font-mono">${live?.capitalCap ?? 0}</span>
                     </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Orders route through the broker adapter at this capped
-                      size only — the cap cannot be raised per strategy.
+                    {!run ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        No live trading days recorded yet.
+                      </p>
+                    ) : (
+                      <>
+                        <ComparisonTable
+                          rightLabel={`Live (${run.barCount}d)`}
+                          rows={metricRows(snap?.metrics, run.metrics)}
+                        />
+                        {decay?.decayed &&
+                          decay.reasons.map((r) => (
+                            <p key={r} className="text-[11px] text-red-400">
+                              ✗ Strategy decay — {r}
+                            </p>
+                          ))}
+                        {liveGate && (
+                          <div className="border-t border-border/40 pt-1.5">
+                            <p className="text-[11px] text-muted-foreground mb-0.5">
+                              Approval gate
+                            </p>
+                            <GateChecks gate={liveGate} />
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Approved */}
+                {s.status === "approved" && (
+                  <div className="rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2">
+                    <p className="text-[11px] text-green-300">
+                      Approved
+                      {s.stage_metrics?.approval?.approvedAt
+                        ? ` ${s.stage_metrics.approval.approvedAt}`
+                        : ""}{" "}
+                      — cleared the backtest, paper, and long-term live gates.
                     </p>
                   </div>
                 )}
+
+                {advanced && <Journey s={s} />}
 
                 {s.notes && (
                   <p className="text-[11px] text-muted-foreground">{s.notes}</p>
@@ -319,9 +405,14 @@ export default async function StrategiesPage() {
                     </form>
                   )}
                   {s.status === "live_small" && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Long-term live validation is wired up in phase B9.
-                    </span>
+                    <form action={approveStrategy.bind(null, s.id)}>
+                      <button
+                        type="submit"
+                        className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition hover:bg-foreground/90"
+                      >
+                        Approve strategy
+                      </button>
+                    </form>
                   )}
                   {s.status !== "approved" && s.status !== "rejected" && (
                     <form action={rejectStrategy.bind(null, s.id)}>

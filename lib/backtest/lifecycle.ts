@@ -141,3 +141,87 @@ export function evaluatePaperGate(
   ];
   return { passed: checks.every((c) => c.ok), checks };
 }
+
+// -- Strategy decay --------------------------------------------------------
+
+export type DecayResult = { decayed: boolean; reasons: string[] };
+
+export const DECAY = {
+  /** Live Sharpe below this fraction of the backtested Sharpe flags decay. */
+  minSharpeRatio: 0.5,
+  /** Live drawdown exceeding the backtested figure by this many points flags decay. */
+  maxDrawdownExcessPct: 10,
+} as const;
+
+/**
+ * Detects strategy decay — live performance drifting materially below the
+ * profile the strategy was validated against (its backtest baseline).
+ */
+export function detectDecay(
+  live: BacktestMetrics,
+  baseline: BacktestMetrics,
+): DecayResult {
+  const reasons: string[] = [];
+  if (
+    baseline.sharpe > 0 &&
+    live.sharpe < baseline.sharpe * DECAY.minSharpeRatio
+  ) {
+    reasons.push(
+      `live Sharpe ${live.sharpe.toFixed(2)} is well below the backtested ${baseline.sharpe.toFixed(2)}`,
+    );
+  }
+  if (
+    live.maxDrawdownPct >
+    baseline.maxDrawdownPct + DECAY.maxDrawdownExcessPct
+  ) {
+    reasons.push(
+      `live drawdown ${live.maxDrawdownPct.toFixed(1)}% exceeds the backtested ${baseline.maxDrawdownPct.toFixed(1)}% by over ${DECAY.maxDrawdownExcessPct} points`,
+    );
+  }
+  return { decayed: reasons.length > 0, reasons };
+}
+
+// -- Live -> approved gate -------------------------------------------------
+
+/** Thresholds for promoting live_small -> approved. */
+export const LIVE_GATE = {
+  minLiveDays: 120,
+  minTotalReturnPct: 0,
+  maxDrawdownPct: 20,
+} as const;
+
+/**
+ * Evaluates the live_small -> approved gate against a strategy's long-term
+ * live metrics, the length of its live run, and whether decay was detected.
+ */
+export function evaluateLiveGate(
+  m: BacktestMetrics,
+  liveDays: number,
+  decayed: boolean,
+): GateResult {
+  const checks: GateCheck[] = [
+    {
+      label: "Long-term live track record",
+      ok: liveDays >= LIVE_GATE.minLiveDays,
+      detail: `${liveDays} live trading days (need at least ${LIVE_GATE.minLiveDays})`,
+    },
+    {
+      label: "Positive live return",
+      ok: m.totalReturnPct > LIVE_GATE.minTotalReturnPct,
+      detail: `return ${m.totalReturnPct.toFixed(2)}% (need > ${LIVE_GATE.minTotalReturnPct}%)`,
+    },
+    {
+      label: "Live drawdown within limit",
+      ok: m.maxDrawdownPct < LIVE_GATE.maxDrawdownPct,
+      detail: `drawdown ${m.maxDrawdownPct.toFixed(2)}% (need < ${LIVE_GATE.maxDrawdownPct}%)`,
+    },
+    {
+      label: "No strategy decay detected",
+      ok: !decayed,
+      detail: decayed
+        ? "live performance has drifted from the validated profile"
+        : "live performance tracks the validated profile",
+    },
+  ];
+  return { passed: checks.every((c) => c.ok), checks };
+}
