@@ -22,7 +22,7 @@ export async function getBrokerAdapter(userId: string): Promise<BrokerAdapter> {
     .maybeSingle();
 
   if (data?.broker_mode === "live" && data?.real_money_unlocked === true) {
-    return new QuestradeAdapter();
+    return new QuestradeAdapter(userId, supabase);
   }
   return new PaperAdapter();
 }

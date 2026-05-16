@@ -118,3 +118,15 @@ export async function deleteBrokerCredentials(
     .eq("user_id", userId);
   return !error;
 }
+
+/** Records which Questrade account orders route to. */
+export async function setBrokerAccountId(
+  supabase: SupabaseClient,
+  userId: string,
+  accountId: string,
+): Promise<void> {
+  await supabase
+    .from("broker_credentials")
+    .update({ account_id: accountId })
+    .eq("user_id", userId);
+}
