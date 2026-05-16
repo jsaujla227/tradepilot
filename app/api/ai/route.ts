@@ -5,6 +5,8 @@ import { acquireLock, releaseLock } from "@/lib/redis";
 import { calcCost } from "@/lib/ai/pricing";
 import { z } from "zod";
 
+import { matchPatterns } from "@/lib/ai/match-patterns";
+
 // System prompt must exceed 1024 tokens so Anthropic prompt caching triggers.
 const SYSTEM_PROMPT = `You are the AI helper inside TradePilot, a private single-user paper-trading cockpit. Your role is to help the user understand their positions, manage risk, and learn from their own trading decisions. You are NOT a financial advisor and you must never act like one.
 
@@ -62,6 +64,14 @@ WHEN ASKED FOR A STRUCTURED ASSESSMENT (tool-use mode):
 - "reasoning" is a brief ≤300-char explanation, grounded in the provided data. Acknowledge missing data when relevant.
 - Never use banned vocabulary inside the tool call either — the same rules apply to tool inputs.
 
+WHEN REVIEWING MATCHED PATTERNS (pre-trade mode):
+- The user's personal trading patterns are provided in matched_patterns.
+- For each match, reference it explicitly: "This setup resembles your [description] pattern (win rate X%, expectancy Y R)."
+- If a losing pattern matches, frame it as a question: "What is different about this setup that changes the outcome?"
+- If a winning pattern matches, name the edge: "This matches your strongest historical edge."
+- Never say the trade will succeed or fail. Surface the historical data and let the user decide.
+- If no patterns match, say so: "No historical patterns match this setup — not enough data yet."
+
 CONTEXT ABOUT THE APP:
 - TradePilot is a private cockpit. All trades are paper trades. No real money involved.
 - Risk engine formulas: positionSize = (accountSize × riskPct / 100) / (entry − stop); rMultiple = (target − entry) / (entry − stop); circuit breaker fires when daily loss exceeds dailyLossLimitPct of account size.
@@ -81,7 +91,11 @@ OUTPUT FORMAT (free-text mode):
 const bodySchema = z.object({
   prompt: z.string().min(1).max(2000),
   dataProvided: z.record(z.string(), z.unknown()).default({}),
-  mode: z.enum(["explain", "assess"]).default("explain"),
+  mode: z.enum(["explain", "assess", "pre-trade"]).default("explain"),
+  // pre-trade mode extras
+  setupSector: z.string().optional(),
+  setupDirection: z.enum(["long", "short"]).optional(),
+  setupRAtEntry: z.coerce.number().optional(),
 });
 
 // Schema mirror of the tool input for runtime validation. Keep in sync with
@@ -163,7 +177,7 @@ export async function POST(req: NextRequest) {
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) return new Response("Invalid request", { status: 400 });
 
-  const { prompt, dataProvided, mode } = parsed.data;
+  const { prompt, dataProvided, mode, setupSector, setupDirection, setupRAtEntry } = parsed.data;
 
   // Monthly budget check
   const { data: profileRow } = await supabase
@@ -214,9 +228,55 @@ export async function POST(req: NextRequest) {
   });
   const model = modelId;
 
-  const userMessage = `Context data:\n${JSON.stringify(dataProvided, null, 2)}\n\n${prompt}`;
+  // -- Pre-trade mode: augment context with matched learned_patterns ----------
+  let augmentedData = { ...dataProvided };
+  if (mode === "pre-trade") {
+    const { data: patternRows } = await supabase
+      .from("learned_patterns")
+      .select("pattern_type, description, conditions, stats, sample_count")
+      .eq("user_id", user.id);
 
-  if (mode === "assess") {
+    const patterns = (patternRows ?? []) as Array<{
+      pattern_type: "winning" | "losing" | "neutral";
+      description: string;
+      conditions: Record<string, unknown>;
+      stats: Record<string, number>;
+      sample_count: number;
+    }>;
+
+    const matched =
+      setupDirection && setupRAtEntry != null
+        ? matchPatterns(
+            patterns.map((p) => ({
+              pattern_type: p.pattern_type,
+              description: p.description,
+              conditions: p.conditions as Parameters<typeof matchPatterns>[0][0]["conditions"],
+              stats: p.stats as Parameters<typeof matchPatterns>[0][0]["stats"],
+            })),
+            {
+              sector: setupSector,
+              direction: setupDirection,
+              r_at_entry: setupRAtEntry,
+            },
+          )
+        : [];
+
+    augmentedData = {
+      ...dataProvided,
+      matched_patterns: matched.map((m) => ({
+        pattern_type: m.pattern.pattern_type,
+        description: m.pattern.description,
+        win_rate: m.pattern.stats.win_rate,
+        expectancy: m.pattern.stats.expectancy,
+        sample_count: m.pattern.stats.sample_count,
+        match_reason: m.match_reason,
+      })),
+      total_patterns_in_library: patterns.length,
+    };
+  }
+
+  if (mode === "assess" || mode === "pre-trade") {
+    const userMessage = `Context data:\n${JSON.stringify(augmentedData, null, 2)}\n\n${prompt}`;
     try {
       const response = await anthropic.messages.create({
         model,
@@ -272,7 +332,7 @@ export async function POST(req: NextRequest) {
         prompt,
         response: JSON.stringify(validated.data),
         model,
-        data_provided: dataProvided,
+        data_provided: augmentedData,
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_read_input_tokens: cacheReadInputTokens,
@@ -282,8 +342,10 @@ export async function POST(req: NextRequest) {
 
       return new Response(
         JSON.stringify({
-          mode: "assess",
+          mode,
           assessment: validated.data,
+          matched_patterns: (augmentedData as Record<string, unknown>).matched_patterns ?? [],
+          total_patterns_in_library: (augmentedData as Record<string, unknown>).total_patterns_in_library ?? 0,
           usage: {
             inputTokens,
             outputTokens,
@@ -302,6 +364,7 @@ export async function POST(req: NextRequest) {
 
   // -- Explain (streaming text) mode -----------------------------------------
 
+  const explainMessage = `Context data:\n${JSON.stringify(augmentedData, null, 2)}\n\n${prompt}`;
   const stream = anthropic.messages.stream({
     model,
     max_tokens: 1024,
@@ -312,7 +375,7 @@ export async function POST(req: NextRequest) {
         cache_control: { type: "ephemeral" },
       },
     ],
-    messages: [{ role: "user", content: userMessage }],
+    messages: [{ role: "user", content: explainMessage }],
   });
 
   const encoder = new TextEncoder();
@@ -356,7 +419,7 @@ export async function POST(req: NextRequest) {
           prompt,
           response: fullText,
           model,
-          data_provided: dataProvided,
+          data_provided: augmentedData,
           input_tokens: inputTokens,
           output_tokens: outputTokens,
           cache_read_input_tokens: cacheReadInputTokens,
