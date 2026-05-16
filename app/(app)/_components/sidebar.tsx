@@ -16,6 +16,7 @@ const NAV: NavItem[] = [
   { href: "/orders", label: "Orders", milestone: "M6" },
   { href: "/watchlist", label: "Watchlist", milestone: "M8" },
   { href: "/suggestions", label: "Suggestions", milestone: null },
+  { href: "/backtest", label: "Backtest", milestone: null },
   { href: "/risk", label: "Risk", milestone: null },
   { href: "/journal", label: "Journal", milestone: "M9" },
   { href: "/ai", label: "AI", milestone: "M10" },
