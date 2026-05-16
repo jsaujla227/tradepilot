@@ -2,6 +2,7 @@ import { getUserAndProfile } from "@/lib/profile";
 import { DEFAULT_PROFILE } from "@/lib/profile";
 import { getUserTickers } from "@/lib/user-tickers";
 import { PositionSizeCalculator } from "./_components/position-size";
+import { VolatilitySizeCalculator } from "./_components/volatility-size";
 import { RMultipleCalculator } from "./_components/r-multiple";
 import { LossScenariosCalculator } from "./_components/loss-scenarios";
 import { ConcentrationCalculator } from "./_components/concentration";
@@ -9,7 +10,7 @@ import { ConcentrationCalculator } from "./_components/concentration";
 export const metadata = {
   title: "Risk · TradePilot",
   description:
-    "Position sizing, R-multiple, loss scenarios, and concentration math — with the math shown.",
+    "Position sizing, volatility-targeted sizing, R-multiple, loss scenarios, and concentration math — with the math shown.",
 };
 
 export default async function RiskPage() {
@@ -29,7 +30,7 @@ export default async function RiskPage() {
           Risk calculators
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground leading-relaxed">
-          Four pure-math calculators for sizing trades, framing reward against
+          Five pure-math calculators for sizing trades, framing reward against
           risk, and stress-testing positions. Every result has a{" "}
           <span className="font-mono text-foreground/80">Why?</span> reveal
           showing exactly how the number was computed — no black boxes.
@@ -61,6 +62,11 @@ export default async function RiskPage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <PositionSizeCalculator
+          defaultAccountSize={defaults.account_size_initial}
+          defaultMaxRiskPct={defaults.max_risk_per_trade_pct}
+          tickers={tickers}
+        />
+        <VolatilitySizeCalculator
           defaultAccountSize={defaults.account_size_initial}
           defaultMaxRiskPct={defaults.max_risk_per_trade_pct}
           tickers={tickers}

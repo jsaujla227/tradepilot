@@ -6,6 +6,7 @@ import {
   concentrationLabel,
   dailyLossBreached,
   portfolioHeat,
+  volatilityTargetSize,
   RiskError,
 } from "./index";
 
@@ -426,6 +427,114 @@ describe("portfolioHeat", () => {
   it("throws on max heat >= 100%", () => {
     expect(() =>
       portfolioHeat({ accountSize: 10000, maxHeatPct: 100, positions: [] }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("volatilityTargetSize", () => {
+  it("derives an ATR stop and sizes a long trade", () => {
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 2.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    // per-share risk = 2 * 2.5 = 5; stop = 100 - 5 = 95
+    expect(out.perShareRisk).toBe(5);
+    expect(out.stop).toBe(95);
+    expect(out.stopDistancePct).toBe(5);
+    // risk $ = 100; shares = floor(100 / 5) = 20
+    expect(out.riskAmount).toBe(100);
+    expect(out.shares).toBe(20);
+    expect(out.capitalRequired).toBe(2000);
+    expect(out.pctOfAccount).toBe(20);
+  });
+
+  it("places the ATR stop above entry for a short trade", () => {
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 2.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "short",
+    });
+    expect(out.stop).toBe(105);
+    expect(out.shares).toBe(20);
+  });
+
+  it("sizes fewer shares for a more volatile stock at equal dollar risk", () => {
+    const calm = volatilityTargetSize({
+      entry: 100,
+      atr: 1,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    const wild = volatilityTargetSize({
+      entry: 100,
+      atr: 4,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    expect(calm.riskAmount).toBe(wild.riskAmount);
+    expect(wild.shares).toBeLessThan(calm.shares);
+  });
+
+  it("floors fractional shares", () => {
+    // risk = 100, per-share = 3, raw = 33.33 → 33
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 1.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    expect(out.shares).toBe(33);
+  });
+
+  it("throws when the ATR stop would fall at or below zero", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 10,
+        atr: 6,
+        accountSize: 10000,
+        maxRiskPct: 1,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on a non-positive ATR", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 100,
+        atr: 0,
+        accountSize: 10000,
+        maxRiskPct: 1,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on max risk >= 100%", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 100,
+        atr: 2,
+        accountSize: 10000,
+        maxRiskPct: 100,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
     ).toThrow(RiskError);
   });
 });

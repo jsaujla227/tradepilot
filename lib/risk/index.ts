@@ -369,3 +369,78 @@ export function portfolioHeat(input: PortfolioHeatInput): PortfolioHeatOutput {
     unquantifiedCount,
   };
 }
+
+// -- volatilityTargetSize -------------------------------------------------
+
+export type VolatilityTargetSizeInput = {
+  entry: number;
+  /** Average True Range in price units (e.g. ATR-14). */
+  atr: number;
+  accountSize: number;
+  /** Max risk per trade as a percent of account size. */
+  maxRiskPct: number;
+  /** Stop distance expressed in ATRs (e.g. 2 = a 2×ATR stop). */
+  atrMultiplier: number;
+  direction: Direction;
+};
+
+export type VolatilityTargetSizeOutput = {
+  shares: number;
+  /** ATR-derived stop price. */
+  stop: number;
+  /** Stop distance in price units = atrMultiplier × atr. */
+  perShareRisk: number;
+  /** Stop distance as a percent of entry. */
+  stopDistancePct: number;
+  riskAmount: number;
+  capitalRequired: number;
+  pctOfAccount: number;
+};
+
+/**
+ * Volatility-targeted position sizing. Derives the stop from the stock's own
+ * ATR (entry ∓ atrMultiplier × atr) rather than a guessed level, then sizes
+ * the position so dollars-at-risk stay fixed at maxRiskPct. A more volatile
+ * stock gets a wider stop and fewer shares; a quiet one gets a tighter stop
+ * and more shares — the dollar risk is constant, the share count adapts.
+ */
+export function volatilityTargetSize(
+  input: VolatilityTargetSizeInput,
+): VolatilityTargetSizeOutput {
+  assertPositive(input.entry, "entry");
+  assertPositive(input.atr, "ATR");
+  assertPositive(input.accountSize, "account size");
+  assertPositive(input.maxRiskPct, "max risk %");
+  assertPositive(input.atrMultiplier, "ATR multiplier");
+  if (input.maxRiskPct >= 100) {
+    throw new RiskError("max risk % must be less than 100", "invalid-input");
+  }
+
+  const perShareRisk = input.atrMultiplier * input.atr;
+  const stop =
+    input.direction === "long"
+      ? input.entry - perShareRisk
+      : input.entry + perShareRisk;
+  if (stop <= 0) {
+    throw new RiskError(
+      "ATR stop falls at or below zero — multiplier is too wide for this price",
+      "stop-below-zero",
+    );
+  }
+
+  const riskAmount = (input.accountSize * input.maxRiskPct) / 100;
+  const shares = Math.floor(riskAmount / perShareRisk);
+  const capitalRequired = shares * input.entry;
+  const pctOfAccount = (capitalRequired / input.accountSize) * 100;
+  const stopDistancePct = (perShareRisk / input.entry) * 100;
+
+  return {
+    shares,
+    stop,
+    perShareRisk,
+    stopDistancePct,
+    riskAmount,
+    capitalRequired,
+    pctOfAccount,
+  };
+}
