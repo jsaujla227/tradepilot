@@ -5,6 +5,9 @@ import {
   lossScenarios,
   concentrationLabel,
   dailyLossBreached,
+  portfolioHeat,
+  volatilityTargetSize,
+  atrTrailingStop,
   RiskError,
 } from "./index";
 
@@ -279,6 +282,354 @@ describe("dailyLossBreached", () => {
         dailyLossLimitPct: 3,
         realizedToday: NaN,
         openPnL: 0,
+      }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("portfolioHeat", () => {
+  it("sums open risk from entry when no price is supplied", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48 },
+        { ticker: "BBB", shares: 50, entry: 80, stop: 76 },
+      ],
+    });
+    // AAA: 2/sh * 100 = 200; BBB: 4/sh * 50 = 200
+    expect(out.totalRisk).toBe(400);
+    expect(out.totalRiskPct).toBeCloseTo(4);
+    expect(out.maxHeat).toBe(600);
+    expect(out.remaining).toBe(200);
+    expect(out.breached).toBe(false);
+    expect(out.unquantifiedCount).toBe(0);
+  });
+
+  it("uses live price as the open-risk basis when provided", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48, price: 55 },
+      ],
+    });
+    // risk from price 55 down to stop 48 = 7/sh * 100
+    expect(out.totalRisk).toBe(700);
+  });
+
+  it("clamps risk to zero when a long's stop is locked in above price", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        {
+          ticker: "AAA",
+          shares: 100,
+          entry: 50,
+          stop: 52,
+          price: 51,
+          direction: "long",
+        },
+      ],
+    });
+    expect(out.totalRisk).toBe(0);
+    expect(out.positions[0]!.riskAmount).toBe(0);
+    expect(out.positions[0]!.direction).toBe("long");
+  });
+
+  it("computes open risk for a short position", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 54, price: 50 },
+      ],
+    });
+    // short: stop 54 - price 50 = 4/sh * 100
+    expect(out.totalRisk).toBe(400);
+    expect(out.positions[0]!.direction).toBe("short");
+  });
+
+  it("respects an explicit direction for a long with a trailed stop", () => {
+    // Long position whose stop has trailed above entry: still long, and
+    // open risk is price down to stop — not the inferred "short" reading.
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        {
+          ticker: "AAA",
+          shares: 100,
+          entry: 50,
+          stop: 52,
+          price: 55,
+          direction: "long",
+        },
+      ],
+    });
+    expect(out.positions[0]!.direction).toBe("long");
+    expect(out.totalRisk).toBe(300); // (55 - 52) * 100
+  });
+
+  it("flags positions with no stop on file as unquantified", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 100, entry: 50, stop: 48 },
+        { ticker: "BBB", shares: 50, entry: 80, stop: null },
+      ],
+    });
+    expect(out.unquantifiedCount).toBe(1);
+    expect(out.totalRisk).toBe(200);
+    const bbb = out.positions[1]!;
+    expect(bbb.hasStop).toBe(false);
+    expect(bbb.riskAmount).toBeNull();
+    expect(bbb.riskPct).toBeNull();
+  });
+
+  it("breaches when total risk reaches the ceiling", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [
+        { ticker: "AAA", shares: 300, entry: 50, stop: 48 },
+      ],
+    });
+    // 2/sh * 300 = 600 = ceiling
+    expect(out.totalRisk).toBe(600);
+    expect(out.breached).toBe(true);
+    expect(out.remaining).toBe(0);
+  });
+
+  it("handles an empty portfolio", () => {
+    const out = portfolioHeat({
+      accountSize: 10000,
+      maxHeatPct: 6,
+      positions: [],
+    });
+    expect(out.totalRisk).toBe(0);
+    expect(out.breached).toBe(false);
+    expect(out.remaining).toBe(600);
+    expect(out.unquantifiedCount).toBe(0);
+  });
+
+  it("throws when a position's stop equals its entry", () => {
+    expect(() =>
+      portfolioHeat({
+        accountSize: 10000,
+        maxHeatPct: 6,
+        positions: [{ ticker: "AAA", shares: 100, entry: 50, stop: 50 }],
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on max heat >= 100%", () => {
+    expect(() =>
+      portfolioHeat({ accountSize: 10000, maxHeatPct: 100, positions: [] }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("volatilityTargetSize", () => {
+  it("derives an ATR stop and sizes a long trade", () => {
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 2.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    // per-share risk = 2 * 2.5 = 5; stop = 100 - 5 = 95
+    expect(out.perShareRisk).toBe(5);
+    expect(out.stop).toBe(95);
+    expect(out.stopDistancePct).toBe(5);
+    // risk $ = 100; shares = floor(100 / 5) = 20
+    expect(out.riskAmount).toBe(100);
+    expect(out.shares).toBe(20);
+    expect(out.capitalRequired).toBe(2000);
+    expect(out.pctOfAccount).toBe(20);
+  });
+
+  it("places the ATR stop above entry for a short trade", () => {
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 2.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "short",
+    });
+    expect(out.stop).toBe(105);
+    expect(out.shares).toBe(20);
+  });
+
+  it("sizes fewer shares for a more volatile stock at equal dollar risk", () => {
+    const calm = volatilityTargetSize({
+      entry: 100,
+      atr: 1,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    const wild = volatilityTargetSize({
+      entry: 100,
+      atr: 4,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    expect(calm.riskAmount).toBe(wild.riskAmount);
+    expect(wild.shares).toBeLessThan(calm.shares);
+  });
+
+  it("floors fractional shares", () => {
+    // risk = 100, per-share = 3, raw = 33.33 → 33
+    const out = volatilityTargetSize({
+      entry: 100,
+      atr: 1.5,
+      accountSize: 10000,
+      maxRiskPct: 1,
+      atrMultiplier: 2,
+      direction: "long",
+    });
+    expect(out.shares).toBe(33);
+  });
+
+  it("throws when the ATR stop would fall at or below zero", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 10,
+        atr: 6,
+        accountSize: 10000,
+        maxRiskPct: 1,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on a non-positive ATR", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 100,
+        atr: 0,
+        accountSize: 10000,
+        maxRiskPct: 1,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on max risk >= 100%", () => {
+    expect(() =>
+      volatilityTargetSize({
+        entry: 100,
+        atr: 2,
+        accountSize: 10000,
+        maxRiskPct: 100,
+        atrMultiplier: 2,
+        direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("atrTrailingStop", () => {
+  it("trails up from the high-water-mark for a long", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 120,
+      initialStop: 95,
+    });
+    // raw = 120 - 3*2 = 114; above the 95 floor → ratchets to 114
+    expect(out.rawStop).toBe(114);
+    expect(out.trailingStop).toBe(114);
+    expect(out.hasRatcheted).toBe(true);
+    expect(out.riskFree).toBe(true); // 114 >= entry 100
+    // 1R = 5; locked = (114 - 100)/5 = 2.8
+    expect(out.lockedInR).toBeCloseTo(2.8);
+  });
+
+  it("holds the current stop when the raw stop sits below it", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 103,
+      initialStop: 95,
+      currentStop: 98,
+    });
+    // raw = 103 - 6 = 97, below the 98 floor → stays at 98
+    expect(out.trailingStop).toBe(98);
+    expect(out.hasRatcheted).toBe(false);
+    expect(out.riskFree).toBe(false); // 98 < entry 100
+    expect(out.lockedInR).toBeCloseTo(-0.4); // (98-100)/5
+  });
+
+  it("trails down from the low-water-mark for a short", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "short",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 80,
+      initialStop: 105,
+    });
+    // raw = 80 + 6 = 86; below the 105 floor → ratchets down to 86
+    expect(out.trailingStop).toBe(86);
+    expect(out.hasRatcheted).toBe(true);
+    expect(out.riskFree).toBe(true); // 86 <= entry 100
+    // 1R = 5; locked = (100-86)/5 = 2.8
+    expect(out.lockedInR).toBeCloseTo(2.8);
+  });
+
+  it("respects an existing stop and does not loosen it", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 5,
+      atrMultiplier: 3,
+      extreme: 101,
+      initialStop: 95,
+      currentStop: 99,
+    });
+    // raw = 101 - 15 = 86, well below the 99 floor → stays 99, no loosening
+    expect(out.trailingStop).toBe(99);
+    expect(out.hasRatcheted).toBe(false);
+  });
+
+  it("throws when a long's initial stop is not below entry", () => {
+    expect(() =>
+      atrTrailingStop({
+        entry: 100,
+        direction: "long",
+        atr: 2,
+        atrMultiplier: 3,
+        extreme: 120,
+        initialStop: 105,
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on a non-positive ATR", () => {
+    expect(() =>
+      atrTrailingStop({
+        entry: 100,
+        direction: "long",
+        atr: 0,
+        atrMultiplier: 3,
+        extreme: 120,
+        initialStop: 95,
       }),
     ).toThrow(RiskError);
   });
