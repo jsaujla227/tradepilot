@@ -5,11 +5,17 @@ import { getHistoricalBars } from "@/lib/backtest/data";
 import { paperRun, type PaperRun } from "@/lib/backtest/paper";
 import {
   STATUS_LABEL,
+  evaluatePaperGate,
   type StrategyStatus,
   type GateResult,
 } from "@/lib/backtest/lifecycle";
 import { CreateStrategyForm } from "./_components/create-strategy-form";
-import { backtestAndPromote, advanceStage, rejectStrategy } from "./actions";
+import {
+  backtestAndPromote,
+  advanceStage,
+  promoteToLive,
+  rejectStrategy,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Strategies · TradePilot" };
@@ -24,6 +30,13 @@ type BacktestSnapshot = {
   gate?: GateResult;
 };
 
+type LiveSnapshot = {
+  evaluatedAt?: string;
+  gate?: GateResult;
+  startedAt?: string;
+  capitalCap?: number;
+};
+
 type StrategyRow = {
   id: string;
   name: string;
@@ -33,6 +46,7 @@ type StrategyRow = {
   stage_metrics: {
     backtest?: BacktestSnapshot;
     paper?: { startedAt?: string };
+    live?: LiveSnapshot;
   } | null;
   notes: string | null;
   created_at: string;
@@ -79,6 +93,21 @@ function comparisonRows(
       paper: String(paper.tradeCount),
     },
   ];
+}
+
+function GateChecks({ gate }: { gate: GateResult }) {
+  return (
+    <>
+      {gate.checks.map((c) => (
+        <p
+          key={c.label}
+          className={`text-[11px] ${c.ok ? "text-green-400" : "text-red-400"}`}
+        >
+          {c.ok ? "✓" : "✗"} {c.label} — {c.detail}
+        </p>
+      ))}
+    </>
+  );
 }
 
 export default async function StrategiesPage() {
@@ -134,7 +163,11 @@ export default async function StrategiesPage() {
           {strategies.map((s) => {
             const snap = s.stage_metrics?.backtest;
             const paperStartedAt = s.stage_metrics?.paper?.startedAt;
+            const live = s.stage_metrics?.live;
             const run = paperRuns.get(s.id);
+            const paperGate = run
+              ? evaluatePaperGate(run.metrics, run.barCount)
+              : null;
             return (
               <div
                 key={s.id}
@@ -172,20 +205,13 @@ export default async function StrategiesPage() {
                           {(snap.metrics?.totalReturnPct ?? 0).toFixed(2)}% ·
                           Sharpe {(snap.metrics?.sharpe ?? 0).toFixed(2)}
                         </p>
-                        {snap.gate?.checks.map((c) => (
-                          <p
-                            key={c.label}
-                            className={`text-[11px] ${c.ok ? "text-green-400" : "text-red-400"}`}
-                          >
-                            {c.ok ? "✓" : "✗"} {c.label} — {c.detail}
-                          </p>
-                        ))}
+                        {snap.gate && <GateChecks gate={snap.gate} />}
                       </>
                     )}
                   </div>
                 )}
 
-                {/* Paper run: backtest-expected vs paper-actual */}
+                {/* Paper run: backtest-expected vs paper-actual + paper gate */}
                 {s.status === "paper" && (
                   <div className="rounded-md border border-border/50 bg-background/30 px-3 py-2 space-y-1.5">
                     <p className="text-[11px] font-medium text-muted-foreground">
@@ -198,31 +224,61 @@ export default async function StrategiesPage() {
                         accumulates as historical bars arrive.
                       </p>
                     ) : (
-                      <table className="w-full text-[11px] tabular-nums">
-                        <thead>
-                          <tr className="text-muted-foreground">
-                            <th className="text-left font-normal">Metric</th>
-                            <th className="text-right font-normal">Backtest</th>
-                            <th className="text-right font-normal">
-                              Paper ({run.barCount}d)
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {comparisonRows(snap?.metrics, run.metrics).map(
-                            (r) => (
-                              <tr key={r.label}>
-                                <td className="text-muted-foreground">
-                                  {r.label}
-                                </td>
-                                <td className="text-right">{r.backtest}</td>
-                                <td className="text-right">{r.paper}</td>
-                              </tr>
-                            ),
-                          )}
-                        </tbody>
-                      </table>
+                      <>
+                        <table className="w-full text-[11px] tabular-nums">
+                          <thead>
+                            <tr className="text-muted-foreground">
+                              <th className="text-left font-normal">Metric</th>
+                              <th className="text-right font-normal">
+                                Backtest
+                              </th>
+                              <th className="text-right font-normal">
+                                Paper ({run.barCount}d)
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {comparisonRows(snap?.metrics, run.metrics).map(
+                              (r) => (
+                                <tr key={r.label}>
+                                  <td className="text-muted-foreground">
+                                    {r.label}
+                                  </td>
+                                  <td className="text-right">{r.backtest}</td>
+                                  <td className="text-right">{r.paper}</td>
+                                </tr>
+                              ),
+                            )}
+                          </tbody>
+                        </table>
+                        {paperGate && (
+                          <div className="border-t border-border/40 pt-1.5">
+                            <p className="text-[11px] text-muted-foreground mb-0.5">
+                              Live (small) gate
+                            </p>
+                            <GateChecks gate={paperGate} />
+                          </div>
+                        )}
+                      </>
                     )}
+                  </div>
+                )}
+
+                {/* Live (small) evidence */}
+                {s.status === "live_small" && live && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1">
+                    <p className="text-[11px] text-amber-300">
+                      Live (small size)
+                      {live.startedAt ? ` since ${live.startedAt}` : ""} · hard
+                      capital cap{" "}
+                      <span className="font-mono">
+                        ${live.capitalCap ?? 0}
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Orders route through the broker adapter at this capped
+                      size only — the cap cannot be raised per strategy.
+                    </p>
                   </div>
                 )}
 
@@ -249,6 +305,16 @@ export default async function StrategiesPage() {
                         className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition hover:bg-foreground/90"
                       >
                         Move to paper trading
+                      </button>
+                    </form>
+                  )}
+                  {s.status === "paper" && (
+                    <form action={promoteToLive.bind(null, s.id)}>
+                      <button
+                        type="submit"
+                        className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background transition hover:bg-foreground/90"
+                      >
+                        Promote to live (small)
                       </button>
                     </form>
                   )}

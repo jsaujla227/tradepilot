@@ -100,3 +100,44 @@ export function evaluateBacktestGate(
   ];
   return { passed: checks.every((c) => c.ok), checks };
 }
+
+/** Thresholds for promoting paper -> live_small. */
+export const PAPER_GATE = {
+  minPaperDays: 60,
+  minTotalReturnPct: 0,
+  maxDrawdownPct: 20,
+  minTrades: 5,
+} as const;
+
+/**
+ * Evaluates the paper -> live_small gate against a strategy's forward
+ * paper-trading metrics and the length of its paper run.
+ */
+export function evaluatePaperGate(
+  m: BacktestMetrics,
+  paperDays: number,
+): GateResult {
+  const checks: GateCheck[] = [
+    {
+      label: "Long enough paper run",
+      ok: paperDays >= PAPER_GATE.minPaperDays,
+      detail: `${paperDays} trading days (need at least ${PAPER_GATE.minPaperDays})`,
+    },
+    {
+      label: "Positive forward paper return",
+      ok: m.totalReturnPct > PAPER_GATE.minTotalReturnPct,
+      detail: `return ${m.totalReturnPct.toFixed(2)}% (need > ${PAPER_GATE.minTotalReturnPct}%)`,
+    },
+    {
+      label: "Paper drawdown within limit",
+      ok: m.maxDrawdownPct < PAPER_GATE.maxDrawdownPct,
+      detail: `drawdown ${m.maxDrawdownPct.toFixed(2)}% (need < ${PAPER_GATE.maxDrawdownPct}%)`,
+    },
+    {
+      label: "Enough paper trades",
+      ok: m.tradeCount >= PAPER_GATE.minTrades,
+      detail: `${m.tradeCount} trades (need at least ${PAPER_GATE.minTrades})`,
+    },
+  ];
+  return { passed: checks.every((c) => c.ok), checks };
+}

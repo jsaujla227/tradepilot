@@ -10,7 +10,12 @@ import {
   buildSmaStrategy,
   sharpeObjective,
 } from "@/lib/backtest/walk-forward";
-import { evaluateBacktestGate } from "@/lib/backtest/lifecycle";
+import { paperRun } from "@/lib/backtest/paper";
+import {
+  evaluateBacktestGate,
+  evaluatePaperGate,
+} from "@/lib/backtest/lifecycle";
+import { cappedLiveCapital, LIVE_CAPITAL_CAP_MAX } from "@/lib/backtest/live";
 
 // Backtest evidence window and walk-forward shape used when promoting a
 // draft strategy: ~5 years of bars, 1-year in-sample / 1-quarter out-of-sample.
@@ -195,6 +200,73 @@ export async function advanceStage(strategyId: string): Promise<void> {
       notes: "Moved to forward paper trading.",
       updated_at: new Date().toISOString(),
     })
+    .eq("id", strategyId)
+    .eq("user_id", user.id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/strategies");
+}
+
+/**
+ * Evaluates the forward paper run against the paper gate and, when it passes,
+ * promotes the strategy to `live_small` with a hard-capped live capital limit.
+ */
+export async function promoteToLive(strategyId: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) throw new Error("Supabase not configured");
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  const { data: row } = await supabase
+    .from("strategies")
+    .select("ticker, params, status, stage_metrics")
+    .eq("id", strategyId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!row) throw new Error("Strategy not found");
+  if (row.status !== "paper") {
+    throw new Error(
+      "Only a strategy in paper trading can be promoted to live.",
+    );
+  }
+
+  const params = (row.params ?? {}) as { fast?: number; slow?: number };
+  const existing = (row.stage_metrics ?? {}) as Record<string, unknown> & {
+    paper?: { startedAt?: string };
+  };
+  const startedAt = existing.paper?.startedAt;
+  if (!startedAt) {
+    throw new Error("Strategy has no paper-start date — cannot evaluate.");
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const bars = await getHistoricalBars(
+    supabase,
+    row.ticker as string,
+    startedAt,
+    today,
+  );
+  const run = paperRun(bars, params.fast ?? 50, params.slow ?? 200);
+  const gate = evaluatePaperGate(run.metrics, run.barCount);
+
+  const live: Record<string, unknown> = { evaluatedAt: today, gate };
+  const update: Record<string, unknown> = {
+    notes: gate.passed
+      ? "Paper gate passed — promoted to live (small size)."
+      : "Paper gate not met — see the criteria below.",
+    updated_at: new Date().toISOString(),
+  };
+  if (gate.passed) {
+    live.startedAt = today;
+    live.capitalCap = cappedLiveCapital(LIVE_CAPITAL_CAP_MAX);
+    update.status = "live_small";
+  }
+  update.stage_metrics = { ...existing, live };
+
+  const { error } = await supabase
+    .from("strategies")
+    .update(update)
     .eq("id", strategyId)
     .eq("user_id", user.id);
   if (error) throw new Error(error.message);
