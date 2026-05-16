@@ -4,10 +4,12 @@ import {
   getHoldingsView,
   getRecentTransactions,
   getPortfolioHeat,
+  getTrailingStops,
 } from "@/lib/portfolio";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { HoldingsTable } from "./_components/holdings-table";
 import { PortfolioHeatCard } from "./_components/portfolio-heat-card";
+import { TrailingStopsCard } from "./_components/trailing-stops-card";
 import { AddTransactionForm } from "./_components/add-transaction-form";
 import { TransactionsList } from "./_components/transactions-list";
 import { formatPct } from "@/lib/format";
@@ -42,11 +44,14 @@ export default async function PortfolioPage() {
   const transactions =
     txSettled.status === "fulfilled" ? txSettled.value : [];
 
-  const heat = await getPortfolioHeat(
-    holdingsView,
-    session.profile.account_size_initial,
-    session.profile.max_portfolio_heat_pct,
-  );
+  const [heat, trailingStops] = await Promise.all([
+    getPortfolioHeat(
+      holdingsView,
+      session.profile.account_size_initial,
+      session.profile.max_portfolio_heat_pct,
+    ),
+    getTrailingStops(holdingsView).catch(() => null),
+  ]);
 
   // Sector concentration: warn when any sector > 25% of priced holdings.
   // ticker_meta read is non-essential, so a failure should not break the page.
@@ -135,6 +140,8 @@ export default async function PortfolioPage() {
       )}
 
       <HoldingsTable view={holdingsView} />
+
+      {trailingStops && <TrailingStopsCard view={trailingStops} />}
 
       <AddTransactionForm />
 

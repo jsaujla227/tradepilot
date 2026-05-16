@@ -444,3 +444,93 @@ export function volatilityTargetSize(
     pctOfAccount,
   };
 }
+
+// -- atrTrailingStop ------------------------------------------------------
+
+export type AtrTrailingStopInput = {
+  entry: number;
+  direction: Direction;
+  /** Current ATR in price units (e.g. ATR-14). */
+  atr: number;
+  /** Trailing distance expressed in ATRs (e.g. 3). */
+  atrMultiplier: number;
+  /** Highest price reached since entry for a long; lowest for a short. */
+  extreme: number;
+  /** Initial stop set at entry — the 1R reference. */
+  initialStop: number;
+  /** Stop currently on file; the trailing stop never loosens past it.
+   *  Defaults to initialStop. */
+  currentStop?: number;
+};
+
+export type AtrTrailingStopOutput = {
+  /** Suggested stop after applying the ratchet rule. */
+  trailingStop: number;
+  /** Raw ATR-derived (chandelier) stop before ratcheting. */
+  rawStop: number;
+  /** True when the trailing stop advances past the current stop. */
+  hasRatcheted: boolean;
+  /** True once the trailing stop reaches/passes entry — initial risk removed. */
+  riskFree: boolean;
+  /** R locked in by the trailing stop. Negative while still below entry. */
+  lockedInR: number;
+};
+
+/**
+ * ATR trailing stop (chandelier-exit style). The raw stop trails the extreme
+ * price reached since entry by atrMultiplier × ATR. A ratchet rule then keeps
+ * the suggested stop from ever loosening past the stop already on file — for
+ * a long it only moves up. lockedInR reports how much of the initial 1R risk
+ * the trailing stop has converted into protected profit.
+ */
+export function atrTrailingStop(
+  input: AtrTrailingStopInput,
+): AtrTrailingStopOutput {
+  assertPositive(input.entry, "entry");
+  assertPositive(input.atr, "ATR");
+  assertPositive(input.atrMultiplier, "ATR multiplier");
+  assertPositive(input.extreme, "extreme price");
+  assertPositive(input.initialStop, "initial stop");
+  if (input.currentStop !== undefined) {
+    assertPositive(input.currentStop, "current stop");
+  }
+  if (input.entry === input.initialStop) {
+    throw new RiskError("initial stop must differ from entry", "entry-equals-stop");
+  }
+
+  const longTrade = input.direction === "long";
+  if (longTrade && input.initialStop >= input.entry) {
+    throw new RiskError(
+      "a long's initial stop must sit below entry",
+      "stop-wrong-side",
+    );
+  }
+  if (!longTrade && input.initialStop <= input.entry) {
+    throw new RiskError(
+      "a short's initial stop must sit above entry",
+      "stop-wrong-side",
+    );
+  }
+
+  const oneR = Math.abs(input.entry - input.initialStop);
+  const floor = input.currentStop ?? input.initialStop;
+  const offset = input.atrMultiplier * input.atr;
+
+  const rawStop = longTrade
+    ? input.extreme - offset
+    : input.extreme + offset;
+  const trailingStop = longTrade
+    ? Math.max(rawStop, floor)
+    : Math.min(rawStop, floor);
+  const hasRatcheted = longTrade
+    ? trailingStop > floor
+    : trailingStop < floor;
+  const riskFree = longTrade
+    ? trailingStop >= input.entry
+    : trailingStop <= input.entry;
+  const lockedInR = longTrade
+    ? (trailingStop - input.entry) / oneR
+    : (input.entry - trailingStop) / oneR;
+
+  return { trailingStop, rawStop, hasRatcheted, riskFree, lockedInR };
+}

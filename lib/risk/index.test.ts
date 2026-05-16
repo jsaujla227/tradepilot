@@ -7,6 +7,7 @@ import {
   dailyLossBreached,
   portfolioHeat,
   volatilityTargetSize,
+  atrTrailingStop,
   RiskError,
 } from "./index";
 
@@ -534,6 +535,101 @@ describe("volatilityTargetSize", () => {
         maxRiskPct: 100,
         atrMultiplier: 2,
         direction: "long",
+      }),
+    ).toThrow(RiskError);
+  });
+});
+
+describe("atrTrailingStop", () => {
+  it("trails up from the high-water-mark for a long", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 120,
+      initialStop: 95,
+    });
+    // raw = 120 - 3*2 = 114; above the 95 floor → ratchets to 114
+    expect(out.rawStop).toBe(114);
+    expect(out.trailingStop).toBe(114);
+    expect(out.hasRatcheted).toBe(true);
+    expect(out.riskFree).toBe(true); // 114 >= entry 100
+    // 1R = 5; locked = (114 - 100)/5 = 2.8
+    expect(out.lockedInR).toBeCloseTo(2.8);
+  });
+
+  it("holds the current stop when the raw stop sits below it", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 103,
+      initialStop: 95,
+      currentStop: 98,
+    });
+    // raw = 103 - 6 = 97, below the 98 floor → stays at 98
+    expect(out.trailingStop).toBe(98);
+    expect(out.hasRatcheted).toBe(false);
+    expect(out.riskFree).toBe(false); // 98 < entry 100
+    expect(out.lockedInR).toBeCloseTo(-0.4); // (98-100)/5
+  });
+
+  it("trails down from the low-water-mark for a short", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "short",
+      atr: 2,
+      atrMultiplier: 3,
+      extreme: 80,
+      initialStop: 105,
+    });
+    // raw = 80 + 6 = 86; below the 105 floor → ratchets down to 86
+    expect(out.trailingStop).toBe(86);
+    expect(out.hasRatcheted).toBe(true);
+    expect(out.riskFree).toBe(true); // 86 <= entry 100
+    // 1R = 5; locked = (100-86)/5 = 2.8
+    expect(out.lockedInR).toBeCloseTo(2.8);
+  });
+
+  it("respects an existing stop and does not loosen it", () => {
+    const out = atrTrailingStop({
+      entry: 100,
+      direction: "long",
+      atr: 5,
+      atrMultiplier: 3,
+      extreme: 101,
+      initialStop: 95,
+      currentStop: 99,
+    });
+    // raw = 101 - 15 = 86, well below the 99 floor → stays 99, no loosening
+    expect(out.trailingStop).toBe(99);
+    expect(out.hasRatcheted).toBe(false);
+  });
+
+  it("throws when a long's initial stop is not below entry", () => {
+    expect(() =>
+      atrTrailingStop({
+        entry: 100,
+        direction: "long",
+        atr: 2,
+        atrMultiplier: 3,
+        extreme: 120,
+        initialStop: 105,
+      }),
+    ).toThrow(RiskError);
+  });
+
+  it("throws on a non-positive ATR", () => {
+    expect(() =>
+      atrTrailingStop({
+        entry: 100,
+        direction: "long",
+        atr: 0,
+        atrMultiplier: 3,
+        extreme: 120,
+        initialStop: 95,
       }),
     ).toThrow(RiskError);
   });
