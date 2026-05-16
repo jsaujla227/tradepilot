@@ -169,22 +169,41 @@ export default async function DashboardPage() {
                       {h.open_pnl != null ? formatMoney(h.open_pnl) : "—"}
                     </td>
                     <td className="py-1.5 text-right">
-                      <ExplainButton
-                        label="Explain"
-                        prompt={`Explain my ${h.ticker} position: what is my risk exposure, open P&L, and what could go wrong?`}
-                        dataProvided={{
-                          ticker: h.ticker,
-                          qty: h.qty,
-                          avgCost: h.avg_cost,
-                          currentPrice: h.price,
-                          openPnl: h.open_pnl,
-                          marketValue: h.market_value,
-                          totalPortfolioValue: holdings.total_market_value,
-                          accountSize,
-                          maxRiskPct,
-                          dailyLossLimitPct,
-                        }}
-                      />
+                      <div className="flex flex-col items-end gap-1">
+                        <ExplainButton
+                          label="Explain"
+                          prompt={`Explain my ${h.ticker} position: what is my risk exposure, open P&L, and what could go wrong?`}
+                          dataProvided={{
+                            ticker: h.ticker,
+                            qty: h.qty,
+                            avgCost: h.avg_cost,
+                            currentPrice: h.price,
+                            openPnl: h.open_pnl,
+                            marketValue: h.market_value,
+                            totalPortfolioValue: holdings.total_market_value,
+                            accountSize,
+                            maxRiskPct,
+                            dailyLossLimitPct,
+                          }}
+                        />
+                        <ExplainButton
+                          label="AI signal"
+                          mode="assess"
+                          prompt={`Produce a structured AI signal for my open ${h.ticker} position. I already hold it — judge whether the setup still holds, name the primary catalyst and primary risk from here, and give exit triggers. Be conservative: no stop or target is recorded for this position, so default to low confidence when key data is missing.`}
+                          dataProvided={{
+                            ticker: h.ticker,
+                            qty: h.qty,
+                            avgCost: h.avg_cost,
+                            currentPrice: h.price,
+                            openPnl: h.open_pnl,
+                            marketValue: h.market_value,
+                            totalPortfolioValue: holdings.total_market_value,
+                            accountSize,
+                            maxRiskPct,
+                            dailyLossLimitPct,
+                          }}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}
