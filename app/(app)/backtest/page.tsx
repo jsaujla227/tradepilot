@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { BacktestRunner } from "./_components/backtest-runner";
+import { WalkForwardRunner } from "./_components/walk-forward-runner";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Backtest · TradePilot" };
@@ -42,7 +43,25 @@ export default async function BacktestPage() {
         </p>
       </div>
 
-      <BacktestRunner />
+      <section className="space-y-3">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Single backtest
+        </h2>
+        <BacktestRunner />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Walk-forward analysis
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Optimises the SMA periods on a rolling in-sample window, then scores
+          the winner on the next unseen window and rolls forward. The aggregate
+          out-of-sample result — not the optimised in-sample one — is the honest
+          measure of the strategy.
+        </p>
+        <WalkForwardRunner />
+      </section>
 
       {recent.length > 0 && (
         <section className="space-y-3">
