@@ -33,7 +33,13 @@ export type TradePattern = {
   stats: {
     win_rate: number;
     avg_r: number;
+    /** Mean R across winning trades only. 0 when the group has no wins. */
+    avg_win_r: number;
+    /** Mean R magnitude across losing trades only. 0 when the group has no losses. */
+    avg_loss_r: number;
     expectancy: number;
+    /** Gross winning R divided by gross losing R. null when there are no losses. */
+    profit_factor: number | null;
     sample_count: number;
   };
 };
@@ -116,16 +122,15 @@ export function extractPatterns(
     const win_rate = wins.length / trades.length;
     const avg_r =
       trades.reduce((s, t) => s + t.r_realized, 0) / trades.length;
-    const avg_win_r = wins.length
-      ? wins.reduce((s, t) => s + t.r_realized, 0) / wins.length
-      : 0;
-    const avg_loss_r = losses.length
-      ? Math.abs(
-          losses.reduce((s, t) => s + t.r_realized, 0) / losses.length,
-        )
-      : 0;
+    const grossWinR = wins.reduce((s, t) => s + t.r_realized, 0);
+    const grossLossR = Math.abs(
+      losses.reduce((s, t) => s + t.r_realized, 0),
+    );
+    const avg_win_r = wins.length ? grossWinR / wins.length : 0;
+    const avg_loss_r = losses.length ? grossLossR / losses.length : 0;
     const expectancy =
       win_rate * avg_win_r - (1 - win_rate) * avg_loss_r;
+    const profit_factor = grossLossR > 0 ? grossWinR / grossLossR : null;
 
     const sector =
       sectorPart !== "unknown" ? sectorPart : undefined;
@@ -160,7 +165,15 @@ export function extractPatterns(
       pattern_type,
       description,
       conditions,
-      stats: { win_rate, avg_r, expectancy, sample_count: trades.length },
+      stats: {
+        win_rate,
+        avg_r,
+        avg_win_r,
+        avg_loss_r,
+        expectancy,
+        profit_factor,
+        sample_count: trades.length,
+      },
     });
   }
 

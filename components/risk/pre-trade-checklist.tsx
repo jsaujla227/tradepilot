@@ -28,6 +28,7 @@ type PatternMatch = {
   description: string;
   win_rate: number;
   expectancy: number;
+  profit_factor: number | null;
   sample_count: number;
   match_reason: string;
 };
@@ -466,6 +467,22 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
                               >
                                 {pm.expectancy > 0 ? "+" : ""}
                                 {pm.expectancy.toFixed(2)}R
+                              </b>
+                            </span>
+                            <span>
+                              Profit factor:{" "}
+                              <b
+                                className={
+                                  pm.profit_factor == null
+                                    ? "text-foreground/80"
+                                    : pm.profit_factor >= 1
+                                      ? "text-green-400"
+                                      : "text-red-400"
+                                }
+                              >
+                                {pm.profit_factor == null
+                                  ? "no losses"
+                                  : pm.profit_factor.toFixed(2)}
                               </b>
                             </span>
                             <span>
