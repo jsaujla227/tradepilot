@@ -8,12 +8,19 @@ read this cold and continue the work without losing context.
 
 ## NEXT ACTION
 
-The **Backtesting & Strategy-Validation initiative** has been greenlit by the
-owner. A 9-phase plan exists (below). **Phase B1 has NOT been started yet** — it
-is awaiting the owner's explicit "go". Do not begin B1 (it creates a table in the
-live Supabase project) until that go is given.
+The **Backtesting & Strategy-Validation initiative** is greenlit. The owner
+asked to build all 9 phases autonomously, then paused to continue in a co-work
+session.
 
-When cleared, start at **Phase B1 — Historical data foundation**.
+**Resume at Phase B1 — Historical data foundation.** A complete, ready-to-build
+implementation spec for B1 is in the **"Phase B1 — implementation spec"**
+section below: exact file list, full migration SQL, function designs, the
+building blocks already in the repo, and the gotchas. No design work is needed
+— build it, verify, open a draft PR, merge, then move to B2.
+
+Status: B1 not started — no code written, nothing committed. (An empty local
+branch `claude/backtest-b1-historical-data` was created in a prior session but
+never pushed; ignore it and create a fresh branch.)
 
 ---
 
@@ -43,7 +50,8 @@ All 7 PRs are resolved. `main` = trunk + PR#4/#5/#6/#7.
 ### Database (Supabase project `pixyzcydahpasazpkmzr`, "tradepilot")
 Migrations `0001`–`0014` applied; all 16 tables present with RLS. Migrations are
 applied via the Supabase MCP `apply_migration` tool (no local Supabase CLI in
-the remote environment).
+the remote environment). The next migration number is `0015` (B1's
+`historical_bars` table).
 
 ---
 
@@ -97,6 +105,114 @@ owner's "Go ahead".
 - Each phase leaves the app working; stop at a checkpoint for the owner's go.
 - One housekeeping item inside this initiative: update `CLAUDE.md` to move
   backtesting out of the "Out of scope" list (the owner has greenlit it).
+
+---
+
+## Phase B1 — implementation spec (ready to build)
+
+Goal: a `historical_bars` table holding **adjusted daily OHLCV**, plus a
+resumable ingestion job that backfills it from Massive. Backtests (B3+) replay
+from this table, never the live API.
+
+### Files to create
+1. `supabase/migrations/0015_historical_bars.sql` — the table (SQL below).
+2. `lib/backtest/data.ts` — typed read access.
+3. `lib/backtest/data.test.ts` — unit tests for the pure mapper.
+4. `lib/backtest/ingest.ts` — `backfillBars()` ingestion logic.
+5. `app/api/cron/backfill-bars/route.ts` — daily incremental cron.
+6. `app/api/admin/backfill-bars/route.ts` — on-demand full backfill (admin).
+7. `vercel.json` — add the backfill cron entry.
+
+### Migration SQL (`0015_historical_bars.sql`)
+
+```sql
+-- B1: historical_bars — adjusted daily OHLCV for backtesting. Shared market
+-- data (not user-scoped): any signed-in user may read; writes are service-role
+-- only (no write policy → RLS blocks all non-service-role writes).
+
+CREATE TABLE public.historical_bars (
+  ticker      TEXT          NOT NULL,
+  bar_date    DATE          NOT NULL,
+  open        NUMERIC(20,6) NOT NULL,
+  high        NUMERIC(20,6) NOT NULL,
+  low         NUMERIC(20,6) NOT NULL,
+  close       NUMERIC(20,6) NOT NULL,
+  volume      BIGINT        NOT NULL DEFAULT 0,
+  ingested_at TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (ticker, bar_date)
+);
+
+CREATE INDEX historical_bars_date_idx ON public.historical_bars (bar_date);
+
+ALTER TABLE public.historical_bars ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "historical_bars: authenticated read"
+  ON public.historical_bars
+  FOR SELECT
+  TO authenticated
+  USING (true);
+```
+
+After committing the file, apply it to the live DB with the Supabase MCP
+`apply_migration` tool (project `pixyzcydahpasazpkmzr`, name `historical_bars`).
+
+### `lib/backtest/data.ts`
+- `export type HistoricalBar = { ticker; date /* YYYY-MM-DD */; open; high;
+  low; close; volume }` (all prices/volume `number`).
+- Zod row schema — Postgres `NUMERIC`/`BIGINT` come back as strings, so use
+  `z.coerce.number()`.
+- `toHistoricalBar(row: unknown): HistoricalBar` — pure: validates + maps
+  `bar_date`→`date`. This is the unit-tested part.
+- `getHistoricalBars(supabase, ticker, from, to): Promise<HistoricalBar[]>` —
+  selects from `historical_bars` filtered by ticker + `bar_date` range, ordered
+  `bar_date` ascending.
+
+### `lib/backtest/ingest.ts`
+- `backfillBars(admin, tickers, lookbackDays): Promise<BackfillResult[]>` where
+  `BackfillResult = { ticker; ok; barsUpserted; error? }`.
+- Per ticker: `getBars(ticker, 1, "day", from, to)` (from
+  `lib/market-data/massive.ts`) → map each `Bar` (`time` ms → `bar_date`
+  `YYYY-MM-DD`) → `admin.from("historical_bars").upsert(rows, { onConflict:
+  "ticker,bar_date" })`. Upsert makes the job idempotent + resumable.
+- Batch (size ~10, ~2 s pause between batches) with `Promise.allSettled` so one
+  bad ticker doesn't abort the run.
+
+### Routes
+- Cron `GET /api/cron/backfill-bars`: timing-safe `Bearer ${CRON_SECRET}` check
+  (copy the `isValidCronAuth` pattern from `app/api/cron/scan/route.ts`);
+  `export const maxDuration = 300`; calls `backfillBars(supabaseAdmin(),
+  SP500_TOP100, 7)` — short look-back keeps recent bars fresh.
+- Admin `POST /api/admin/backfill-bars`: `requireAdmin()` from
+  `lib/admin-auth.ts`; `maxDuration = 300`; full backfill —
+  `backfillBars(supabaseAdmin(), SP500_TOP100, 7300)` (~20 y). May accept a
+  `?days=` query param.
+
+### `vercel.json`
+Add to `crons`: `{ "path": "/api/cron/backfill-bars", "schedule": "0 8 * * 1-5" }`.
+
+### Building blocks already in the repo
+- `getBars(ticker, multiplier, timespan, from, to)` in
+  `lib/market-data/massive.ts` → `Bar { time(ms), open, high, low, close,
+  volume }`, `adjusted=true`, `limit=5000` (~20 y of daily bars in one call).
+- `supabaseAdmin()` (`lib/supabase/admin.ts`) — service-role writes; cron/admin only.
+- `requireAdmin()` (`lib/admin-auth.ts`) — `ADMIN_USER_IDS` allowlist.
+- `SP500_TOP100` (`lib/universe/sp500.ts`) — the 100-ticker universe.
+- Migration style reference: `supabase/migrations/0011_agent_log.sql`.
+
+### Gotchas / decisions
+- Column is `bar_date`, not `date` (avoid the SQL type-name collision).
+- `historical_bars` is shared market data, not user-scoped: RLS on, a
+  `SELECT TO authenticated USING (true)` policy, and **no** write policy so only
+  the service-role client can write.
+- One `getBars` call per ticker covers the full daily history — no pagination.
+
+### Definition of done for B1
+- Migration file committed AND applied to the live DB.
+- `pnpm typecheck && pnpm lint && pnpm test && pnpm build` all pass.
+- Trigger the admin backfill once; confirm `historical_bars` is populated and
+  record the earliest `bar_date` reached — that answers "how far back does the
+  Massive tier go" and sets the windowing budget for B2-B5.
+- Draft PR opened and merged to `main`; then proceed to B2.
 
 ---
 
