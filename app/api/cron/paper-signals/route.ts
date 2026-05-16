@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   const { data: strategies } = await admin
     .from("strategies")
     .select("id, user_id, ticker, params, stage_metrics")
-    .eq("status", "paper");
+    .in("status", ["paper", "live_small"]);
 
   if (!strategies || strategies.length === 0) {
     return Response.json({ ok: true, strategies: 0, logged: 0 });
@@ -48,8 +48,11 @@ export async function GET(req: NextRequest) {
   for (const s of strategies) {
     const stageMetrics = (s.stage_metrics ?? {}) as {
       paper?: { startedAt?: string };
+      live?: { startedAt?: string };
     };
-    const startedAt = stageMetrics.paper?.startedAt;
+    // live_small strategies log from their live-start; paper from paper-start.
+    const startedAt =
+      stageMetrics.live?.startedAt ?? stageMetrics.paper?.startedAt;
     if (!startedAt) continue;
 
     const params = (s.params ?? {}) as { fast?: number; slow?: number };

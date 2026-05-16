@@ -5,6 +5,8 @@ import {
   isLegalTransition,
   evaluateBacktestGate,
   evaluatePaperGate,
+  evaluateLiveGate,
+  detectDecay,
 } from "./lifecycle";
 
 const metrics = (over: Partial<BacktestMetrics>): BacktestMetrics => ({
@@ -103,5 +105,59 @@ describe("evaluatePaperGate", () => {
     expect(
       evaluatePaperGate(metrics({ maxDrawdownPct: 35 }), 90).passed,
     ).toBe(false);
+  });
+});
+
+describe("detectDecay", () => {
+  it("flags no decay when live tracks the baseline", () => {
+    const r = detectDecay(
+      metrics({ sharpe: 1.1, maxDrawdownPct: 12 }),
+      metrics({ sharpe: 1.2, maxDrawdownPct: 10 }),
+    );
+    expect(r.decayed).toBe(false);
+    expect(r.reasons).toEqual([]);
+  });
+
+  it("flags decay when live Sharpe collapses below the baseline", () => {
+    const r = detectDecay(
+      metrics({ sharpe: 0.3 }),
+      metrics({ sharpe: 1.5 }),
+    );
+    expect(r.decayed).toBe(true);
+  });
+
+  it("flags decay when live drawdown blows past the baseline", () => {
+    const r = detectDecay(
+      metrics({ sharpe: 1.2, maxDrawdownPct: 30 }),
+      metrics({ sharpe: 1.2, maxDrawdownPct: 10 }),
+    );
+    expect(r.decayed).toBe(true);
+  });
+});
+
+describe("evaluateLiveGate", () => {
+  it("passes a long, profitable, non-decayed live run", () => {
+    const r = evaluateLiveGate(
+      metrics({ totalReturnPct: 9, maxDrawdownPct: 11 }),
+      200,
+      false,
+    );
+    expect(r.passed).toBe(true);
+  });
+
+  it("fails a short live run", () => {
+    expect(
+      evaluateLiveGate(metrics({ totalReturnPct: 9 }), 40, false).passed,
+    ).toBe(false);
+  });
+
+  it("fails when decay is detected", () => {
+    const r = evaluateLiveGate(
+      metrics({ totalReturnPct: 9, maxDrawdownPct: 11 }),
+      200,
+      true,
+    );
+    expect(r.passed).toBe(false);
+    expect(r.checks.find((c) => c.label.includes("decay"))!.ok).toBe(false);
   });
 });

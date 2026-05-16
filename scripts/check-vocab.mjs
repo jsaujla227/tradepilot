@@ -12,7 +12,9 @@ const BANNED = [
 
 const pattern = new RegExp(BANNED.map((w) => `\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).join("|"), "gi");
 
-const files = process.argv.slice(2);
+// CLAUDE.md is the source of truth for the banlist — it necessarily contains
+// the banned words (it defines them), so it is not itself scanned.
+const files = process.argv.slice(2).filter((f) => !f.endsWith("CLAUDE.md"));
 let failed = false;
 
 for (const file of files) {

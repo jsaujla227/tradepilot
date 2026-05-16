@@ -14,6 +14,8 @@ import { paperRun } from "@/lib/backtest/paper";
 import {
   evaluateBacktestGate,
   evaluatePaperGate,
+  evaluateLiveGate,
+  detectDecay,
 } from "@/lib/backtest/lifecycle";
 import { cappedLiveCapital, LIVE_CAPITAL_CAP_MAX } from "@/lib/backtest/live";
 
@@ -142,6 +144,7 @@ export async function backtestAndPromote(strategyId: string): Promise<void> {
       backtest: {
         from,
         to,
+        evaluatedAt: to,
         windows: report.windows.length,
         overfittingGap: report.overfittingGap,
         metrics: report.aggregateOutOfSample,
@@ -263,6 +266,80 @@ export async function promoteToLive(strategyId: string): Promise<void> {
     update.status = "live_small";
   }
   update.stage_metrics = { ...existing, live };
+
+  const { error } = await supabase
+    .from("strategies")
+    .update(update)
+    .eq("id", strategyId)
+    .eq("user_id", user.id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/strategies");
+}
+
+/**
+ * Evaluates the long-term live run, detects strategy decay against the
+ * backtested baseline, and approves the strategy when the live gate passes.
+ */
+export async function approveStrategy(strategyId: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) throw new Error("Supabase not configured");
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  const { data: row } = await supabase
+    .from("strategies")
+    .select("ticker, params, status, stage_metrics")
+    .eq("id", strategyId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!row) throw new Error("Strategy not found");
+  if (row.status !== "live_small") {
+    throw new Error("Only a live (small size) strategy can be approved.");
+  }
+
+  const params = (row.params ?? {}) as { fast?: number; slow?: number };
+  const existing = (row.stage_metrics ?? {}) as Record<string, unknown> & {
+    backtest?: { metrics?: import("@/lib/backtest/metrics").BacktestMetrics };
+    live?: { startedAt?: string };
+  };
+  const liveStart = existing.live?.startedAt;
+  if (!liveStart) {
+    throw new Error("Strategy has no live-start date — cannot evaluate.");
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const bars = await getHistoricalBars(
+    supabase,
+    row.ticker as string,
+    liveStart,
+    today,
+  );
+  const run = paperRun(bars, params.fast ?? 50, params.slow ?? 200);
+  const baseline = existing.backtest?.metrics;
+  const decay = baseline
+    ? detectDecay(run.metrics, baseline)
+    : { decayed: false, reasons: [] as string[] };
+  const gate = evaluateLiveGate(run.metrics, run.barCount, decay.decayed);
+
+  const approval: Record<string, unknown> = {
+    evaluatedAt: today,
+    gate,
+    decay,
+    liveMetrics: run.metrics,
+  };
+  const update: Record<string, unknown> = {
+    notes: gate.passed
+      ? "Live gate passed — strategy approved."
+      : "Live gate not met — see the criteria below.",
+    updated_at: new Date().toISOString(),
+  };
+  if (gate.passed) {
+    approval.approvedAt = today;
+    update.status = "approved";
+  }
+  update.stage_metrics = { ...existing, approval };
 
   const { error } = await supabase
     .from("strategies")
