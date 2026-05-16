@@ -52,7 +52,7 @@ export function TickerContextPanel({ ticker, proposedNotional }: Props) {
 
   if (!insight || insight.ticker !== lastTicker) return null;
 
-  const { context, sectorExposure } = insight;
+  const { context, sectorExposure, fundamentals, rsi, macd } = insight;
   const earnings = context.earnings;
   const news = context.news;
   const rec = context.recommendation;
@@ -87,6 +87,12 @@ export function TickerContextPanel({ ticker, proposedNotional }: Props) {
       {sectorExposure && (
         <SectorExposureRow exposure={sectorExposure} />
       )}
+
+      {/* Fundamentals (Alpha Vantage) */}
+      {fundamentals && <FundamentalsRow data={fundamentals} />}
+
+      {/* Technical indicators (Alpha Vantage) */}
+      {(rsi || macd) && <TechnicalsRow rsi={rsi} macd={macd} />}
 
       {/* Analyst breakdown */}
       {rec && <RecommendationBar rec={rec} />}
@@ -243,6 +249,98 @@ function RecommendationBar({
           ) : null,
         )}
       </div>
+    </div>
+  );
+}
+
+function FundamentalsRow({
+  data,
+}: {
+  data: NonNullable<TickerInsight["fundamentals"]>;
+}) {
+  const fmtCap = (n: number | null): string => {
+    if (n == null) return "—";
+    if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+    return `$${n.toFixed(0)}`;
+  };
+  const fmt = (n: number | null, suffix = "") =>
+    n == null ? "—" : `${n.toFixed(2)}${suffix}`;
+  return (
+    <div className="space-y-1 pt-1">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        Fundamentals
+      </p>
+      <div className="grid grid-cols-3 gap-2 text-[11px]">
+        <Stat label="Market cap" value={fmtCap(data.marketCap)} />
+        <Stat label="P/E" value={fmt(data.peRatio)} />
+        <Stat label="EPS" value={fmt(data.eps)} />
+        <Stat
+          label="Div yield"
+          value={data.dividendYield != null ? fmt(data.dividendYield * 100, "%") : "—"}
+        />
+        <Stat label="Beta" value={fmt(data.beta)} />
+        <Stat
+          label="Analyst target"
+          value={data.analystTargetPrice != null ? `$${data.analystTargetPrice.toFixed(2)}` : "—"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TechnicalsRow({
+  rsi,
+  macd,
+}: {
+  rsi: NonNullable<TickerInsight["rsi"]> | null;
+  macd: NonNullable<TickerInsight["macd"]> | null;
+}) {
+  const rsiBand = (v: number): { label: string; colour: string } => {
+    if (v > 70) return { label: "overbought", colour: "text-red-300" };
+    if (v < 30) return { label: "oversold", colour: "text-green-300" };
+    return { label: "neutral", colour: "text-muted-foreground" };
+  };
+  return (
+    <div className="space-y-1 pt-1">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        Technical indicators (daily)
+      </p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+        {rsi && (
+          <span className="tabular-nums">
+            RSI(14): <span className="font-mono font-medium">{rsi.value.toFixed(1)}</span>{" "}
+            <span className={rsiBand(rsi.value).colour}>· {rsiBand(rsi.value).label}</span>
+          </span>
+        )}
+        {macd && (
+          <span className="tabular-nums">
+            MACD:{" "}
+            <span
+              className={`font-mono font-medium ${
+                macd.histogram >= 0 ? "text-green-300" : "text-red-300"
+              }`}
+            >
+              {macd.macd.toFixed(2)}
+            </span>{" "}
+            vs signal {macd.signal.toFixed(2)}{" "}
+            <span className="text-muted-foreground">
+              ({macd.histogram >= 0 ? "+" : ""}
+              {macd.histogram.toFixed(2)})
+            </span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-[10px] text-muted-foreground/70">{label}</span>
+      <span className="font-mono tabular-nums text-foreground/80">{value}</span>
     </div>
   );
 }

@@ -1,15 +1,28 @@
 import "server-only";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PaperAdapter } from "./paper-adapter";
+import { QuestradeAdapter } from "./questrade-adapter";
 import type { BrokerAdapter } from "./types";
 
 export type { BrokerAdapter, BrokerOrder, BrokerMode, SubmitOrderParams } from "./types";
 
 /**
  * Returns the broker adapter for a given user.
- * In M13 this always returns the paper adapter.
- * In M17, reads profiles.broker_mode and returns the Questrade adapter when live.
+ * Reads profiles.broker_mode: returns QuestradeAdapter when "live",
+ * PaperAdapter otherwise.
  */
 export async function getBrokerAdapter(userId: string): Promise<BrokerAdapter> {
-  void userId; // M17: look up profiles.broker_mode; return Questrade adapter if "live"
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return new PaperAdapter();
+
+  const { data } = await supabase
+    .from("profiles")
+    .select("broker_mode, real_money_unlocked")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (data?.broker_mode === "live" && data?.real_money_unlocked === true) {
+    return new QuestradeAdapter();
+  }
   return new PaperAdapter();
 }

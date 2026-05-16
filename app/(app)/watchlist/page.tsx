@@ -2,9 +2,9 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getQuotesMap } from "@/lib/finnhub/data";
 import { getEarningsContext } from "@/lib/finnhub/context";
-import { getIndicators } from "@/lib/massive/indicators";
-import { getPreviousClose } from "@/lib/massive/data";
 import { scoreWatchlistItem } from "@/lib/scoring";
+import { getBars, hasMassiveCreds } from "@/lib/market-data/massive";
+import { computeBarStats, EMPTY_BAR_STATS } from "@/lib/market-data/bar-stats";
 import { type ScoredWatchlistItem, WatchlistTable } from "./_components/watchlist-table";
 import { AddWatchlistForm } from "./_components/add-watchlist-form";
 
@@ -39,42 +39,52 @@ export default async function WatchlistPage() {
     metaRows.map((r) => [r.ticker as string, r.sector as string | null]),
   );
 
-  // Fetch live quotes (Upstash 60 s cache), earnings context, and technical
-  // indicators. Indicator + earnings caches are warmed by the context-refresh
-  // cron — cache misses fall through to a live fetch. All vendor calls are
-  // best-effort: failures return null and the score degrades gracefully.
+  // Fetch live quotes (Upstash 60 s cache) and cached earnings context.
+  // Earnings cache is warmed by the daily context-refresh cron, so this is
+  // essentially a Redis read for each ticker. When Massive credentials are
+  // set, also fetch 320 days of bars (1h cached) so the score picks up
+  // SMA-50/200 trend stack, 20-day historical vol, and real dollar-volume
+  // liquidity.
   const tickers = items.map((i) => i.ticker as string);
-  const [quotesMap, earningsList, indicatorsList, prevCloseList] = await Promise.all([
+  const barsEnabled = hasMassiveCreds();
+  const barsLookback = (() => {
+    const to = new Date();
+    const from = new Date(to.getTime() - 320 * 24 * 60 * 60 * 1000);
+    return {
+      from: from.toISOString().slice(0, 10),
+      to: to.toISOString().slice(0, 10),
+    };
+  })();
+
+  const [quotesMap, earningsList, barsList] = await Promise.all([
     tickers.length > 0
       ? getQuotesMap(tickers)
       : Promise.resolve({} as Awaited<ReturnType<typeof getQuotesMap>>),
-    Promise.all(tickers.map((t) => getEarningsContext(t).catch(() => null))),
+    Promise.all(tickers.map((t) => getEarningsContext(t))),
     Promise.all(
       tickers.map((t) =>
-        getIndicators(t).catch(() => ({ sma50: null, sma200: null, rsi14: null })),
+        barsEnabled
+          ? getBars(t, 1, "day", barsLookback.from, barsLookback.to).catch(() => [])
+          : Promise.resolve([]),
       ),
-    ),
-    Promise.all(
-      tickers.map((t) => getPreviousClose(t).catch(() => ({ bar: null, cacheHit: false }))),
     ),
   ]);
   type Earnings = Awaited<ReturnType<typeof getEarningsContext>>;
   const earningsMap = new Map<string, Earnings>(
     tickers.map((t, i) => [t, earningsList[i] ?? null]),
   );
-  const indicatorsMap = new Map(tickers.map((t, i) => [t, indicatorsList[i]!]));
-  const prevCloseMap = new Map(tickers.map((t, i) => [t, prevCloseList[i]!.bar]));
+  const barStatsMap = new Map(
+    tickers.map((t, i) => {
+      const bars = barsList[i] ?? [];
+      return [t, bars.length > 0 ? computeBarStats(bars) : EMPTY_BAR_STATS];
+    }),
+  );
 
   const scored: ScoredWatchlistItem[] = items.map((item) => {
     const ticker = item.ticker as string;
     const quote = quotesMap[ticker] ?? null;
     const earnings = earningsMap.get(ticker) ?? null;
-    const indicators = indicatorsMap.get(ticker);
-    const prevCloseBar = prevCloseMap.get(ticker) ?? null;
-    const avgDollarVolume =
-      prevCloseBar != null
-        ? prevCloseBar.volume * (prevCloseBar.vwap ?? prevCloseBar.close)
-        : null;
+    const barStats = barStatsMap.get(ticker) ?? EMPTY_BAR_STATS;
     const score = quote
       ? scoreWatchlistItem({
           price: quote.price,
@@ -88,10 +98,7 @@ export default async function WatchlistPage() {
           targetPrice:
             item.target_price != null ? Number(item.target_price) : null,
           daysToEarnings: earnings?.daysUntil ?? null,
-          avgDollarVolume,
-          sma50: indicators?.sma50 ?? null,
-          sma200: indicators?.sma200 ?? null,
-          rsi14: indicators?.rsi14 ?? null,
+          bars: barStats,
         })
       : null;
 
@@ -117,9 +124,8 @@ export default async function WatchlistPage() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">My watchlist</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Score = trend ×20% + volatility ×15% + R-multiple ×20% + liquidity
-          ×10% + event risk ×15% + long trend ×12% + RSI ×8%. Click any input
-          row to see the math.
+          Score = trend ×25% + volatility ×20% + R-multiple ×25% + liquidity
+          ×10% + event risk ×20%. Click any input row to see the math.
         </p>
       </div>
 

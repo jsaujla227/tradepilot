@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { positionSize, RiskError } from "@/lib/risk";
 import { formatMoney, formatPct, formatNumber } from "@/lib/format";
+import { TickerPicker, type PickedQuote } from "@/components/ticker-picker";
+import type { UserTicker } from "@/lib/user-tickers";
 import {
   CalculatorCard,
   NumberField,
@@ -14,14 +16,31 @@ import {
 export function PositionSizeCalculator({
   defaultAccountSize = 10000,
   defaultMaxRiskPct = 1,
+  tickers = [],
 }: {
   defaultAccountSize?: number;
   defaultMaxRiskPct?: number;
+  tickers?: UserTicker[];
 }) {
   const [accountSize, setAccountSize] = useState(defaultAccountSize);
   const [maxRiskPct, setMaxRiskPct] = useState(defaultMaxRiskPct);
   const [entry, setEntry] = useState(100);
   const [stop, setStop] = useState(95);
+  const [ticker, setTicker] = useState("");
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+
+  const handlePick = (
+    nextTicker: string,
+    quote: PickedQuote | null,
+  ) => {
+    setTicker(nextTicker);
+    if (quote) {
+      setEntry(Number(quote.price.toFixed(2)));
+      setLivePrice(quote.price);
+    } else {
+      setLivePrice(null);
+    }
+  };
 
   const result = useMemo(() => {
     try {
@@ -41,6 +60,17 @@ export function PositionSizeCalculator({
       title="Position size"
       description="How many shares risk exactly your max-risk-per-trade if the stop fills."
     >
+      <TickerPicker
+        tickers={tickers}
+        value={ticker}
+        onPick={handlePick}
+        label="Ticker (auto-fills entry)"
+      />
+      {livePrice != null && ticker && (
+        <p className="-mt-2 text-[11px] text-muted-foreground tabular-nums">
+          Last {ticker}: {formatMoney(livePrice)} — auto-filled into entry
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <NumberField
           label="Account size ($)"

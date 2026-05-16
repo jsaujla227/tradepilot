@@ -1,5 +1,4 @@
 {
-  "ignoreCommand": "echo \"$VERCEL_GIT_COMMIT_MESSAGE\" | grep -q '^\\[skip deploy\\]' && exit 1; git diff HEAD~1 --name-only | grep -qvE '(\\.test\\.(ts|tsx)$|\\.md$|\\.env\\.example$)' && exit 0 || exit 1",
   "crons": [
     {
       "path": "/api/cron/context-refresh",
@@ -10,8 +9,20 @@
       "schedule": "35 13 * * 1-5"
     },
     {
+      "path": "/api/cron/agent-trade",
+      "schedule": "5 14 * * 1-5"
+    },
+    {
+      "path": "/api/cron/position-monitor",
+      "schedule": "30 19 * * 1-5"
+    },
+    {
       "path": "/api/cron/snapshot",
       "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/agent-reflect",
+      "schedule": "30 23 * * 1-5"
     },
     {
       "path": "/api/cron/journal-review",

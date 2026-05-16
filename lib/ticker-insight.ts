@@ -3,6 +3,15 @@ import { getTickerContext, type TickerContext } from "@/lib/finnhub/context";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getHoldingsView } from "@/lib/portfolio";
 import { tickerSchema } from "@/lib/ticker";
+import {
+  getCompanyOverview,
+  getRSI,
+  getMACD,
+  hasAlphaVantageCreds,
+  type CompanyOverview,
+  type IndicatorReading,
+  type MacdReading,
+} from "@/lib/market-data/alphavantage";
 
 // Decision-support snapshot for a single ticker: known events, recent news,
 // analyst consensus, and a sector-exposure projection if the user supplies a
@@ -28,6 +37,9 @@ export type TickerInsight = {
   ticker: string;
   context: TickerContext;
   sectorExposure: SectorExposure | null;
+  fundamentals: CompanyOverview | null;
+  rsi: IndicatorReading | null;
+  macd: MacdReading | null;
 };
 
 export async function getTickerInsight(
@@ -41,7 +53,7 @@ export async function getTickerInsight(
   const supabase = await createSupabaseServerClient();
   if (!supabase) {
     const context = await getTickerContext(ticker);
-    return { ticker, context, sectorExposure: null };
+    return { ticker, context, sectorExposure: null, fundamentals: null, rsi: null, macd: null };
   }
 
   const {
@@ -49,7 +61,12 @@ export async function getTickerInsight(
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [context, sectorRow, holdingsView] = await Promise.all([
+  // Alpha Vantage calls are best-effort — free tier is 5 calls/min, so any
+  // single panel load could hit a rate limit. We swallow per-source errors
+  // and return null for that field rather than failing the whole insight.
+  const avEnabled = hasAlphaVantageCreds();
+
+  const [context, sectorRow, holdingsView, fundamentals, rsi, macd] = await Promise.all([
     getTickerContext(ticker),
     supabase
       .from("ticker_meta")
@@ -58,6 +75,9 @@ export async function getTickerInsight(
       .eq("ticker", ticker)
       .maybeSingle(),
     getHoldingsView(),
+    avEnabled ? getCompanyOverview(ticker).catch(() => null) : Promise.resolve(null),
+    avEnabled ? getRSI(ticker).catch(() => null) : Promise.resolve(null),
+    avEnabled ? getMACD(ticker).catch(() => null) : Promise.resolve(null),
   ]);
 
   const sector = (sectorRow.data?.sector as string | null) ?? null;
@@ -71,7 +91,7 @@ export async function getTickerInsight(
     holdings: holdingsView.holdings,
   });
 
-  return { ticker, context, sectorExposure };
+  return { ticker, context, sectorExposure, fundamentals, rsi, macd };
 }
 
 type SupabaseLike = NonNullable<

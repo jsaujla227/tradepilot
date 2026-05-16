@@ -19,7 +19,7 @@ The full small-batch build plan lives at `~/.claude/plans/tradepilot-build-rosy-
 
 - **Next.js 15 App Router**, TypeScript strict, no `any`. Server Components by default; Client Components only where interactivity requires.
 - **Server Actions for mutations**, Route Handlers only for read endpoints the client polls (quotes) and external webhooks.
-- **Supabase (Postgres + Auth + RLS).** RLS on every table from day 1. Service role key only via a single `supabaseAdmin()` helper imported from `app/api/cron/*` and `scripts/*` — never from anywhere else.
+- **Supabase (Postgres + Auth + RLS).** RLS on every table from day 1. Service role key only via a single `supabaseAdmin()` helper imported from `app/api/cron/*`, `app/api/admin/*`, and `scripts/*` — never from anywhere else. The `app/api/admin/*` routes are user-triggered alternates to crons and MUST call `requireAdmin()` from `lib/admin-auth.ts` (checks `auth.getUser()` + `ADMIN_USER_IDS` allowlist) before touching the admin client.
 - **Zod validation** on every external API response, every form, every Server Action input.
 - **Pure functions in `lib/risk` and `lib/scoring`** have unit tests (Vitest). No exceptions.
 - **Money formatted via `Intl.NumberFormat`** with currency + 2 decimals.

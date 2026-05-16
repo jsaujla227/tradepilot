@@ -58,6 +58,7 @@ export function TransactionsList({
           {transactions.length} most recent
         </span>
       </header>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-muted/10">
           <tr className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -108,6 +109,7 @@ export function TransactionsList({
           ))}
         </tbody>
       </table>
+      </div>
     </section>
   );
 }

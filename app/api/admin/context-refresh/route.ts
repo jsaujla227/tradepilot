@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/admin-auth";
 import { getEarningsContext } from "@/lib/finnhub/context";
 import { SP500_TOP100 } from "@/lib/universe/sp500";
 
@@ -8,13 +8,8 @@ const BATCH_SIZE = 10;
 const BATCH_INTERVAL_MS = 11_000;
 
 export async function POST() {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return new Response("Supabase not configured", { status: 503 });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return new Response("Unauthorized", { status: 401 });
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
 
   const start = Date.now();
   let warmed = 0;

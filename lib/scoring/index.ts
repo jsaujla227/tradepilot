@@ -1,6 +1,9 @@
 // Pure scoring functions. No side effects, no I/O.
 // Every function is unit-tested in index.test.ts.
 
+import type { BarStats } from "@/lib/market-data/bar-stats";
+import { formatDollarVolume } from "@/lib/format";
+
 export type ScoreInput = {
   /** 0–1, higher = more favourable. */
   value: number;
@@ -20,8 +23,6 @@ export type WatchlistScore = {
   rMultiple: ScoreInput;
   liquidity: ScoreInput;
   eventRisk: ScoreInput;
-  longTrend: ScoreInput;
-  rsi: ScoreInput;
 };
 
 export type ScoreWatchlistItemInput = {
@@ -34,39 +35,78 @@ export type ScoreWatchlistItemInput = {
   targetPrice: number | null;
   /** Days until next scheduled earnings; null if unknown or none in window. */
   daysToEarnings: number | null;
-  /** Average dollar volume from daily bars (volume × vwap). Null = not yet cached. */
-  avgDollarVolume?: number | null;
-  /** SMA50 from Massive API. Null = not yet cached. */
-  sma50?: number | null;
-  /** SMA200 from Massive API. Null = not yet cached. */
-  sma200?: number | null;
-  /** RSI-14 from Massive API. Null = not yet cached. */
-  rsi14?: number | null;
+  /** Optional bar-derived stats. When supplied, upgrades the trend / volatility /
+   *  liquidity scores from neutral day-only placeholders to bar-backed values. */
+  bars?: BarStats | null;
 };
 
 // Watchlist weights — must sum to 1.
-// M14: reweighted to accommodate longTrend + rsi; rMultiple and trend reduced.
 const W_WATCHLIST = {
-  trend: 0.20,
-  volatility: 0.15,
-  rMultiple: 0.20,
+  trend: 0.25,
+  volatility: 0.20,
+  rMultiple: 0.25,
   liquidity: 0.10,
-  eventRisk: 0.15,
-  longTrend: 0.12,
-  rsi: 0.08,
+  eventRisk: 0.20,
 } as const;
 
 // Scanner momentum weights — no R-multiple or liquidity (no setup defined).
-// Added longTrend + rsi; trend + volatility weights reduced accordingly.
 const W_MOMENTUM = {
-  trend: 0.35,
-  volatility: 0.25,
+  trend: 0.45,
+  volatility: 0.35,
   eventRisk: 0.20,
-  longTrend: 0.12,
-  rsi: 0.08,
 } as const;
 
-// -- Trend (watchlist 20%, momentum 35%) ------------------------------------
+// -- Trend (watchlist 25%, momentum 45%) ------------------------------------
+// Bar-backed version: blend day momentum (50%) with SMA stack (50%).
+//   SMA stack: price > sma50 > sma200 → 1.0
+//              price > sma50 only      → 0.7
+//              price > sma200 only     → 0.5
+//              price < sma50 < sma200  → 0.0
+//              all other configurations → 0.3 (mixed/transitional)
+function scoreTrendWithBars(
+  price: number,
+  prevClose: number | null,
+  sma50: number | null,
+  sma200: number | null,
+): ScoreInput {
+  if (sma50 == null && sma200 == null) {
+    return scoreTrend(price, prevClose);
+  }
+  const dayPart = scoreTrend(price, prevClose);
+  let stackValue: number;
+  let stackLabel: string;
+  if (sma50 != null && sma200 != null) {
+    if (price > sma50 && sma50 > sma200) {
+      stackValue = 1.0;
+      stackLabel = `price > SMA50 ($${sma50.toFixed(2)}) > SMA200 ($${sma200.toFixed(2)}) — uptrend stack`;
+    } else if (price < sma50 && sma50 < sma200) {
+      stackValue = 0.0;
+      stackLabel = `price < SMA50 ($${sma50.toFixed(2)}) < SMA200 ($${sma200.toFixed(2)}) — downtrend stack`;
+    } else if (price > sma200) {
+      stackValue = 0.5;
+      stackLabel = `price above SMA200 ($${sma200.toFixed(2)}) only — mixed`;
+    } else {
+      stackValue = 0.3;
+      stackLabel = `mixed SMA configuration (price ${price < sma200 ? "<" : ">"} SMA200)`;
+    }
+  } else if (sma50 != null) {
+    stackValue = price > sma50 ? 0.7 : 0.3;
+    stackLabel = `price ${price > sma50 ? ">" : "<"} SMA50 ($${sma50.toFixed(2)}) — partial signal`;
+  } else {
+    // sma200 only
+    stackValue = price > sma200! ? 0.5 : 0.2;
+    stackLabel = `price ${price > sma200! ? ">" : "<"} SMA200 ($${sma200!.toFixed(2)}) — partial signal`;
+  }
+  const value = 0.5 * dayPart.value + 0.5 * stackValue;
+  return {
+    value,
+    label: "Trend",
+    rawLabel: `${dayPart.rawLabel} · ${stackLabel.split(" — ")[1] ?? "SMA stack"}`,
+    why: `Trend = 50 % day momentum + 50 % SMA stack. Day part: ${dayPart.rawLabel} → ${dayPart.value.toFixed(2)}. SMA stack: ${stackLabel} → ${stackValue.toFixed(2)}. Combined: ${value.toFixed(2)}.`,
+    dataAvailable: dayPart.dataAvailable,
+  };
+}
+
 // Day momentum clipped to ±3 %. Positive = better.
 // +3 % → 1.0  |  0 % → 0.5  |  −3 % → 0.0
 function scoreTrend(price: number, prevClose: number | null): ScoreInput {
@@ -92,7 +132,33 @@ function scoreTrend(price: number, prevClose: number | null): ScoreInput {
   };
 }
 
-// -- Volatility (watchlist 15%, momentum 25%) -------------------------------
+// -- Volatility (watchlist 20%, momentum 35%) -------------------------------
+// Bar-backed version: blend day-range volatility (50%) with annualized 20-day
+// historical vol (50%).
+//   20 %/yr → 1.0 (calm)  |  60 %/yr → 0.0 (turbulent)
+function scoreVolatilityWithBars(
+  price: number,
+  high: number | null,
+  low: number | null,
+  historicalVol20: number | null,
+): ScoreInput {
+  if (historicalVol20 == null) {
+    return scoreVolatility(price, high, low);
+  }
+  const dayPart = scoreVolatility(price, high, low);
+  const annVol = historicalVol20;
+  const hvValue = Math.max(0, Math.min(1, 1 - (annVol - 0.2) / 0.4));
+  const value = 0.5 * dayPart.value + 0.5 * hvValue;
+  const annPct = (annVol * 100).toFixed(1);
+  return {
+    value,
+    label: "Volatility",
+    rawLabel: `${dayPart.rawLabel} · 20-d HV ${annPct}%/yr`,
+    why: `Volatility = 50 % day range + 50 % 20-day historical vol. Day part: ${dayPart.rawLabel} → ${dayPart.value.toFixed(2)}. HV part: ${annPct}%/yr annualised — 20 %/yr scores 1, 60 %/yr scores 0 → ${hvValue.toFixed(2)}. Combined: ${value.toFixed(2)}.`,
+    dataAvailable: true,
+  };
+}
+
 // Day range (high − low) / price. Smaller range = calmer = higher score.
 // 0 % range → 1.0  |  ≥5 % range → 0.0
 function scoreVolatility(
@@ -121,7 +187,7 @@ function scoreVolatility(
   };
 }
 
-// -- R-multiple (watchlist 20%) ---------------------------------------------
+// -- R-multiple (watchlist 25%) ---------------------------------------------
 // Planned R = |target − entry| / |entry − stop|.
 // 0R → 0.0  |  3R → 1.0  (capped)
 function scoreRMultiple(
@@ -170,150 +236,35 @@ function scoreRMultiple(
 }
 
 // -- Liquidity (watchlist 10%) ----------------------------------------------
-// Average dollar volume from daily bars (volume × vwap).
-// Requires Massive API daily bars. Falls back to neutral when unavailable.
-// Thresholds calibrated to US large/mid/small-cap typical dollar volumes:
-//   ≥$100M/day → 1.0 (very liquid, tight spreads)
-//   ≥$10M/day  → 0.7 (liquid)
-//   ≥$1M/day   → 0.4 (tradeable but watch spreads)
-//   <$1M/day   → 0.1 (illiquid — avoid)
-function scoreLiquidity(avgDollarVolume?: number | null): ScoreInput {
-  if (avgDollarVolume == null) {
+// Average daily $ volume over 20 bars. Massive.com bars feed this.
+//   ≥ $50 M/day → 1.0 (mega-cap, frictionless)
+//   $5 M/day    → 0.5 (decent mid-cap)
+//   ≤ $200 k    → 0.0 (illiquid — slippage risk on retail-size orders)
+// Log-scale mapping handles the 6 orders of magnitude between micro and mega.
+function scoreLiquidity(avgDollarVolume: number | null = null): ScoreInput {
+  if (avgDollarVolume == null || avgDollarVolume <= 0) {
     return {
       value: 0.5,
       label: "Liquidity",
-      rawLabel: "bars data pending",
-      why: "Average dollar volume requires daily bars from Massive API. Cache warms at 09:30 UTC — score held at 0.5 (neutral) until available.",
+      rawLabel: "bars data unavailable",
+      why: "Average dollar volume requires daily bars. Set MASSIVE_API_KEY to enable — held at 0.5 (neutral) until bars are available.",
       dataAvailable: false,
     };
   }
-  const m = 1_000_000;
-  let value: number;
-  let rawLabel: string;
-  if (avgDollarVolume >= 100 * m) {
-    value = 1.0;
-    rawLabel = `$${(avgDollarVolume / m).toFixed(0)}M avg vol`;
-  } else if (avgDollarVolume >= 10 * m) {
-    value = 0.7;
-    rawLabel = `$${(avgDollarVolume / m).toFixed(0)}M avg vol`;
-  } else if (avgDollarVolume >= m) {
-    value = 0.4;
-    rawLabel = `$${(avgDollarVolume / m).toFixed(1)}M avg vol`;
-  } else {
-    value = 0.1;
-    rawLabel = `$${(avgDollarVolume / 1000).toFixed(0)}K avg vol`;
-  }
+  // log10(200_000) ≈ 5.30; log10(50_000_000) ≈ 7.70 → span of 2.40
+  const log = Math.log10(avgDollarVolume);
+  const value = Math.max(0, Math.min(1, (log - 5.3) / 2.4));
+  const fmt = formatDollarVolume(avgDollarVolume);
   return {
     value,
     label: "Liquidity",
-    rawLabel,
-    why: `Avg dollar volume = volume × vwap = $${(avgDollarVolume / m).toFixed(2)}M. ≥$100M scores 1.0; ≥$10M scores 0.7; ≥$1M scores 0.4; below $1M scores 0.1 (illiquid).`,
+    rawLabel: `${fmt}/day avg`,
+    why: `Average dollar volume over the last 20 daily bars is ${fmt}/day. log10 scale: $200 k/day scores 0, $50 M/day scores 1. Larger volume = lower slippage = higher score → ${value.toFixed(2)}.`,
     dataAvailable: true,
   };
 }
 
-// -- Long trend / SMA (watchlist 12%, momentum 12%) -------------------------
-// Compares price to SMA50 and SMA200 (golden cross / death cross logic).
-// price > SMA50 > SMA200 → strong uptrend → 1.0
-// price > SMA50, SMA50 ≤ SMA200 → recovering → 0.6
-// price ≤ SMA50, SMA50 > SMA200 → pulling back → 0.4
-// price ≤ SMA50 ≤ SMA200 → downtrend → 0.1
-function scoreLongTrend(
-  price: number,
-  sma50: number | null | undefined,
-  sma200: number | null | undefined,
-): ScoreInput {
-  if (sma50 == null || sma200 == null) {
-    return {
-      value: 0.5,
-      label: "Long trend",
-      rawLabel: "SMA data pending",
-      why: "SMA50/200 from Massive API not yet cached. Score held at 0.5 (neutral). Cache warms at 09:30 UTC.",
-      dataAvailable: false,
-    };
-  }
-  const aboveSma50 = price > sma50;
-  const sma50AboveSma200 = sma50 > sma200;
-
-  let value: number;
-  let rawLabel: string;
-  let why: string;
-
-  if (aboveSma50 && sma50AboveSma200) {
-    value = 1.0;
-    rawLabel = "Price > SMA50 > SMA200";
-    why = `Price (${price.toFixed(2)}) is above SMA50 (${sma50.toFixed(2)}) which is above SMA200 (${sma200.toFixed(2)}) — classic uptrend / golden-cross alignment. Scores 1.0.`;
-  } else if (aboveSma50 && !sma50AboveSma200) {
-    value = 0.6;
-    rawLabel = "Price > SMA50, SMA50 < SMA200";
-    why = `Price (${price.toFixed(2)}) is above SMA50 (${sma50.toFixed(2)}) but SMA50 is still below SMA200 (${sma200.toFixed(2)}) — short-term strength in a longer downtrend. Scores 0.6.`;
-  } else if (!aboveSma50 && sma50AboveSma200) {
-    value = 0.4;
-    rawLabel = "Price < SMA50, SMA50 > SMA200";
-    why = `Price (${price.toFixed(2)}) is below SMA50 (${sma50.toFixed(2)}) but the longer trend is still up (SMA50 > SMA200 ${sma200.toFixed(2)}) — pullback within an uptrend. Scores 0.4.`;
-  } else {
-    value = 0.1;
-    rawLabel = "Price < SMA50 < SMA200";
-    why = `Price (${price.toFixed(2)}) is below SMA50 (${sma50.toFixed(2)}) which is below SMA200 (${sma200.toFixed(2)}) — downtrend / death-cross. Scores 0.1.`;
-  }
-
-  return { value, label: "Long trend", rawLabel, why, dataAvailable: true };
-}
-
-// -- RSI (watchlist 8%, momentum 8%) ----------------------------------------
-// RSI-14 from Massive API.
-// < 30  = oversold → 0.65 (mean-reversion opportunity, moderate caution)
-// 30–50 = neutral-bearish → 0.5
-// 50–70 = neutral-bullish → 0.8
-// > 70  = overbought → 0.2
-function scoreRsi(rsi14: number | null | undefined): ScoreInput {
-  if (rsi14 == null) {
-    return {
-      value: 0.5,
-      label: "RSI",
-      rawLabel: "RSI pending",
-      why: "RSI-14 from Massive API not yet cached. Score held at 0.5 (neutral). Cache warms at 09:30 UTC.",
-      dataAvailable: false,
-    };
-  }
-  const rsiStr = rsi14.toFixed(1);
-  if (rsi14 < 30) {
-    return {
-      value: 0.65,
-      label: "RSI",
-      rawLabel: `RSI ${rsiStr} (oversold)`,
-      why: `RSI-14 = ${rsiStr}. Below 30 = oversold — potential mean-reversion entry but could keep falling. Scores 0.65 (moderate opportunity, elevated risk).`,
-      dataAvailable: true,
-    };
-  }
-  if (rsi14 < 50) {
-    return {
-      value: 0.5,
-      label: "RSI",
-      rawLabel: `RSI ${rsiStr} (neutral-bearish)`,
-      why: `RSI-14 = ${rsiStr}. Between 30–50 = below midline, mild bearish momentum. Scores 0.5.`,
-      dataAvailable: true,
-    };
-  }
-  if (rsi14 <= 70) {
-    return {
-      value: 0.8,
-      label: "RSI",
-      rawLabel: `RSI ${rsiStr} (neutral-bullish)`,
-      why: `RSI-14 = ${rsiStr}. Between 50–70 = above midline with room to run. Scores 0.8.`,
-      dataAvailable: true,
-    };
-  }
-  return {
-    value: 0.2,
-    label: "RSI",
-    rawLabel: `RSI ${rsiStr} (overbought)`,
-    why: `RSI-14 = ${rsiStr}. Above 70 = overbought — elevated reversal risk. Scores 0.2.`,
-    dataAvailable: true,
-  };
-}
-
-// -- Event risk (watchlist 15%, momentum 20%) -------------------------------
+// -- Event risk (watchlist 20%, momentum 20%) -------------------------------
 // Distance to the next known earnings announcement. Closer = riskier.
 //   no known earnings within window → 0.5 neutral, dataAvailable false
 //   > 5 days  → 1.0 (clear)
@@ -361,26 +312,33 @@ function scoreEventRisk(daysToEarnings: number | null): ScoreInput {
 export function scoreWatchlistItem(
   input: ScoreWatchlistItemInput,
 ): WatchlistScore {
-  const trend = scoreTrend(input.price, input.prevClose);
-  const volatility = scoreVolatility(input.price, input.high, input.low);
+  const bars = input.bars ?? null;
+  const trend = scoreTrendWithBars(
+    input.price,
+    input.prevClose,
+    bars?.sma50 ?? null,
+    bars?.sma200 ?? null,
+  );
+  const volatility = scoreVolatilityWithBars(
+    input.price,
+    input.high,
+    input.low,
+    bars?.historicalVol20 ?? null,
+  );
   const rMultiple = scoreRMultiple(
     input.targetEntry,
     input.targetStop,
     input.targetPrice,
   );
-  const liquidity = scoreLiquidity(input.avgDollarVolume);
+  const liquidity = scoreLiquidity(bars?.avgDollarVolume ?? null);
   const eventRisk = scoreEventRisk(input.daysToEarnings);
-  const longTrend = scoreLongTrend(input.price, input.sma50, input.sma200);
-  const rsi = scoreRsi(input.rsi14);
 
   const total =
     trend.value * W_WATCHLIST.trend +
     volatility.value * W_WATCHLIST.volatility +
     rMultiple.value * W_WATCHLIST.rMultiple +
     liquidity.value * W_WATCHLIST.liquidity +
-    eventRisk.value * W_WATCHLIST.eventRisk +
-    longTrend.value * W_WATCHLIST.longTrend +
-    rsi.value * W_WATCHLIST.rsi;
+    eventRisk.value * W_WATCHLIST.eventRisk;
 
   return {
     total: Math.round(total * 1000) / 10, // 0–100, 1 decimal
@@ -389,8 +347,6 @@ export function scoreWatchlistItem(
     rMultiple,
     liquidity,
     eventRisk,
-    longTrend,
-    rsi,
   };
 }
 
@@ -400,8 +356,6 @@ export type MomentumBreakdown = {
   trend: { value: number; rawLabel: string; why: string };
   volatility: { value: number; rawLabel: string; why: string };
   eventRisk: { value: number; rawLabel: string; why: string };
-  longTrend: { value: number; rawLabel: string; why: string };
-  rsi: { value: number; rawLabel: string; why: string };
 };
 
 export type ScoreMomentumInput = {
@@ -410,32 +364,38 @@ export type ScoreMomentumInput = {
   high: number | null;
   low: number | null;
   daysToEarnings: number | null;
-  sma50?: number | null;
-  sma200?: number | null;
-  rsi14?: number | null;
+  /** Optional bar-derived stats; upgrades trend/volatility when supplied. */
+  bars?: BarStats | null;
 };
 
 /**
  * Lightweight momentum score for the daily scanner. No R-multiple / liquidity
- * (the scanner has no user setup data). Identical scoring math as the watchlist
- * score so the two surfaces stay consistent.
+ * (the scanner has no user setup data). Identical trend/volatility/eventRisk
+ * math as the watchlist score so the two surfaces stay consistent.
  */
 export function scoreMomentum(input: ScoreMomentumInput): {
   momentum: number;
   breakdown: MomentumBreakdown;
 } {
-  const trend = scoreTrend(input.price, input.prevClose);
-  const volatility = scoreVolatility(input.price, input.high, input.low);
+  const bars = input.bars ?? null;
+  const trend = scoreTrendWithBars(
+    input.price,
+    input.prevClose,
+    bars?.sma50 ?? null,
+    bars?.sma200 ?? null,
+  );
+  const volatility = scoreVolatilityWithBars(
+    input.price,
+    input.high,
+    input.low,
+    bars?.historicalVol20 ?? null,
+  );
   const eventRisk = scoreEventRisk(input.daysToEarnings);
-  const longTrend = scoreLongTrend(input.price, input.sma50, input.sma200);
-  const rsi = scoreRsi(input.rsi14);
 
   const raw =
     trend.value * W_MOMENTUM.trend +
     volatility.value * W_MOMENTUM.volatility +
-    eventRisk.value * W_MOMENTUM.eventRisk +
-    longTrend.value * W_MOMENTUM.longTrend +
-    rsi.value * W_MOMENTUM.rsi;
+    eventRisk.value * W_MOMENTUM.eventRisk;
 
   return {
     momentum: Math.round(raw * 1000) / 10,
@@ -450,16 +410,6 @@ export function scoreMomentum(input: ScoreMomentumInput): {
         value: eventRisk.value,
         rawLabel: eventRisk.rawLabel,
         why: eventRisk.why,
-      },
-      longTrend: {
-        value: longTrend.value,
-        rawLabel: longTrend.rawLabel,
-        why: longTrend.why,
-      },
-      rsi: {
-        value: rsi.value,
-        rawLabel: rsi.rawLabel,
-        why: rsi.why,
       },
     },
   };

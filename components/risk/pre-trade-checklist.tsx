@@ -165,8 +165,11 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
           {/* Row 1: ticker + side */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Ticker</label>
+              <label htmlFor="ptc-ticker" className="text-xs text-muted-foreground">
+                Ticker
+              </label>
               <input
+                id="ptc-ticker"
                 name="ticker"
                 type="text"
                 placeholder="AAPL"
@@ -178,8 +181,10 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">Side</label>
-              <select name="side" className={INPUT}>
+              <label htmlFor="ptc-side" className="text-xs text-muted-foreground">
+                Side
+              </label>
+              <select id="ptc-side" name="side" className={INPUT}>
                 <option value="buy">Buy (long)</option>
                 <option value="sell">Sell (short)</option>
               </select>
@@ -196,8 +201,11 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
               ] as const
             ).map(({ id, label, val, set }) => (
               <div key={id} className="space-y-1">
-                <label className="text-xs text-muted-foreground">{label}</label>
+                <label htmlFor={`ptc-${id}`} className="text-xs text-muted-foreground">
+                  {label}
+                </label>
                 <input
+                  id={`ptc-${id}`}
                   name={id}
                   type="number"
                   min="0.01"
@@ -210,7 +218,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
               </div>
             ))}
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">
+              <label htmlFor="ptc-qty" className="text-xs text-muted-foreground">
                 Qty
                 {psOut && !qtyTouched.current && (
                   <span className="ml-1 text-[10px] text-muted-foreground/60">
@@ -219,6 +227,7 @@ export function PreTradeChecklist({ accountSize, maxRiskPct }: Props) {
                 )}
               </label>
               <input
+                id="ptc-qty"
                 name="qty"
                 type="number"
                 min="0.00000001"

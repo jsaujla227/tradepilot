@@ -68,14 +68,51 @@ export async function GET(req: NextRequest) {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const { data: reviews } = await admin
-      .from("trade_reviews")
-      .select(
-        "ticker, realized_pnl, r_realized, what_worked, what_didnt, lessons, reviewed_at",
-      )
-      .eq("user_id", user_id)
-      .gte("reviewed_at", thirtyDaysAgo.toISOString())
-      .order("reviewed_at", { ascending: false });
+    // Per-user monthly token-budget gate. Mirrors /api/ai/route.ts so the
+    // monthly Opus review can't silently overdraw a user's allowance.
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const [{ data: profileRow }, { data: usageRows }, { data: reviews }] =
+      await Promise.all([
+        admin
+          .from("profiles")
+          .select("ai_token_budget_monthly")
+          .eq("user_id", user_id)
+          .maybeSingle(),
+        admin
+          .from("ai_notes")
+          .select("input_tokens, output_tokens")
+          .eq("user_id", user_id)
+          .gte("created_at", startOfMonth.toISOString()),
+        admin
+          .from("trade_reviews")
+          .select(
+            "ticker, realized_pnl, r_realized, what_worked, what_didnt, lessons, reviewed_at",
+          )
+          .eq("user_id", user_id)
+          .gte("reviewed_at", thirtyDaysAgo.toISOString())
+          .order("reviewed_at", { ascending: false }),
+      ]);
+
+    const budget =
+      (profileRow?.ai_token_budget_monthly as number | null) ?? 100_000;
+    const usedTokens = (usageRows ?? []).reduce(
+      (sum, r) =>
+        sum +
+        ((r.input_tokens as number) ?? 0) +
+        ((r.output_tokens as number) ?? 0),
+      0,
+    );
+
+    if (usedTokens >= budget) {
+      results.push({
+        userId: user_id,
+        status: `skipped — monthly token budget exhausted (${usedTokens}/${budget})`,
+      });
+      continue;
+    }
 
     if (!reviews || reviews.length === 0) {
       results.push({ userId: user_id, status: "skipped — no reviews in last 30 days" });

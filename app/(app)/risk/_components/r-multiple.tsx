@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { rMultiple, RiskError } from "@/lib/risk";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { TickerPicker, type PickedQuote } from "@/components/ticker-picker";
+import type { UserTicker } from "@/lib/user-tickers";
 import {
   CalculatorCard,
   NumberField,
@@ -11,11 +13,27 @@ import {
   ErrorBanner,
 } from "./shell";
 
-export function RMultipleCalculator() {
+export function RMultipleCalculator({
+  tickers = [],
+}: {
+  tickers?: UserTicker[];
+}) {
   const [entry, setEntry] = useState(100);
   const [stop, setStop] = useState(95);
   const [target, setTarget] = useState(115);
   const [exit, setExit] = useState(NaN);
+  const [ticker, setTicker] = useState("");
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+
+  const handlePick = (nextTicker: string, quote: PickedQuote | null) => {
+    setTicker(nextTicker);
+    if (quote) {
+      setEntry(Number(quote.price.toFixed(2)));
+      setLivePrice(quote.price);
+    } else {
+      setLivePrice(null);
+    }
+  };
 
   const result = useMemo(() => {
     try {
@@ -40,6 +58,17 @@ export function RMultipleCalculator() {
       title="R-multiple"
       description="Reward measured in units of risk. Planned R before entry, actual R after exit."
     >
+      <TickerPicker
+        tickers={tickers}
+        value={ticker}
+        onPick={handlePick}
+        label="Ticker (auto-fills entry)"
+      />
+      {livePrice != null && ticker && (
+        <p className="-mt-2 text-[11px] text-muted-foreground tabular-nums">
+          Last {ticker}: {formatMoney(livePrice)} — auto-filled into entry
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <NumberField label="Entry ($)" value={entry} onChange={setEntry} />
         <NumberField label="Stop ($)" value={stop} onChange={setStop} />

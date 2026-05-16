@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { type WatchlistScore } from "@/lib/scoring";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { removeWatchlistItem } from "../actions";
@@ -88,7 +89,12 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
           {/* Header row */}
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <span className="font-mono font-semibold text-base">{item.ticker}</span>
+              <Link
+                href={`/ticker/${item.ticker}`}
+                className="font-mono font-semibold text-base hover:text-foreground/70 transition underline-offset-4 hover:underline"
+              >
+                {item.ticker}
+              </Link>
               {item.sector && (
                 <span className="rounded px-1.5 py-0.5 text-[10px] bg-foreground/8 text-muted-foreground">
                   {item.sector}
@@ -151,8 +157,6 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
               <InputRow {...item.score.rMultiple} />
               <InputRow {...item.score.liquidity} />
               <InputRow {...item.score.eventRisk} />
-              <InputRow {...item.score.longTrend} />
-              <InputRow {...item.score.rsi} />
               <div className="pt-1 border-t border-border/30 mt-1">
                 <ExplainButton
                   label="Assess this setup"
@@ -173,8 +177,6 @@ export function WatchlistTable({ items }: { items: ScoredWatchlistItem[] }) {
                       rMultiple: item.score.rMultiple,
                       liquidity: item.score.liquidity,
                       eventRisk: item.score.eventRisk,
-                      longTrend: item.score.longTrend,
-                      rsi: item.score.rsi,
                     },
                   }}
                 />

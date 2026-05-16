@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile, DEFAULT_PROFILE } from "@/lib/profile";
 import { getHoldingsView } from "@/lib/portfolio";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PreTradeChecklist } from "@/components/risk/pre-trade-checklist";
 import { ExplainButton } from "@/components/ai/explain-button";
+import { PortfolioChart } from "@/components/portfolio/portfolio-chart";
 import { formatMoney, formatPct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +22,42 @@ export default async function DashboardPage() {
   const dailyLossLimitPct =
     profile.daily_loss_limit_pct ?? DEFAULT_PROFILE.daily_loss_limit_pct;
 
-  const holdings = await getHoldingsView();
+  const supabase = await createSupabaseServerClient();
+  // Quotes vendor or Supabase can each rate-limit or hiccup; a single rejection
+  // would otherwise 500 the entire dashboard. Settle both branches and fall
+  // back to empty/null where needed.
+  const [holdingsResult, snapshotResult] = await Promise.allSettled([
+    getHoldingsView(),
+    supabase
+      ? supabase
+          .from("portfolio_snapshots")
+          .select("snapshot_date, total_value")
+          .eq("user_id", session.userId)
+          .order("snapshot_date", { ascending: true })
+          .limit(90)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const holdings =
+    holdingsResult.status === "fulfilled"
+      ? holdingsResult.value
+      : {
+          holdings: [],
+          total_cost_basis: 0,
+          total_market_value: null,
+          total_open_pnl: null,
+          priced_count: 0,
+          quotes_attempted: false,
+        };
+  const snapshotRows =
+    snapshotResult.status === "fulfilled"
+      ? ((snapshotResult.value as { data: Array<{ snapshot_date: string; total_value: number }> | null })
+          .data ?? [])
+      : [];
+  const snapshots = snapshotRows.map((s) => ({
+    snapshot_date: String(s.snapshot_date),
+    total_value: Number(s.total_value),
+  }));
   const totalMv = holdings.total_market_value;
   const totalPnl = holdings.total_open_pnl;
   const pnlPct =
@@ -132,43 +169,22 @@ export default async function DashboardPage() {
                       {h.open_pnl != null ? formatMoney(h.open_pnl) : "—"}
                     </td>
                     <td className="py-1.5 text-right">
-                      <div className="flex flex-col items-end gap-1">
-                        <ExplainButton
-                          label="Explain"
-                          prompt={`Explain my ${h.ticker} position: what is my risk exposure, open P&L, and what could go wrong?`}
-                          dataProvided={{
-                            ticker: h.ticker,
-                            qty: h.qty,
-                            avgCost: h.avg_cost,
-                            currentPrice: h.price,
-                            openPnl: h.open_pnl,
-                            marketValue: h.market_value,
-                            totalPortfolioValue: holdings.total_market_value,
-                            accountSize,
-                            maxRiskPct,
-                            dailyLossLimitPct,
-                          }}
-                        />
-                        <ExplainButton
-                          label="AI signal"
-                          mode="assess"
-                          prompt={`Produce a structured AI signal for my open ${h.ticker} position. I already hold it — judge whether the setup still holds, name the primary catalyst and primary risk from here, and give exit triggers. Be conservative: no stop or target is recorded for this position, so default to low confidence when key data is missing.`}
-                          dataProvided={{
-                            ticker: h.ticker,
-                            qty: h.qty,
-                            avgCost: h.avg_cost,
-                            currentPrice: h.price,
-                            openPnl: h.open_pnl,
-                            openPnlPct: h.open_pnl_pct,
-                            marketValue: h.market_value,
-                            costBasis: h.cost_basis,
-                            totalPortfolioValue: holdings.total_market_value,
-                            accountSize,
-                            maxRiskPct,
-                            dailyLossLimitPct,
-                          }}
-                        />
-                      </div>
+                      <ExplainButton
+                        label="Explain"
+                        prompt={`Explain my ${h.ticker} position: what is my risk exposure, open P&L, and what could go wrong?`}
+                        dataProvided={{
+                          ticker: h.ticker,
+                          qty: h.qty,
+                          avgCost: h.avg_cost,
+                          currentPrice: h.price,
+                          openPnl: h.open_pnl,
+                          marketValue: h.market_value,
+                          totalPortfolioValue: holdings.total_market_value,
+                          accountSize,
+                          maxRiskPct,
+                          dailyLossLimitPct,
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -183,6 +199,9 @@ export default async function DashboardPage() {
           No open positions. Click <strong>New trade</strong> to enter your first paper trade.
         </div>
       )}
+
+      {/* Portfolio performance chart */}
+      <PortfolioChart snapshots={snapshots} accountSize={accountSize} />
     </div>
   );
 }
