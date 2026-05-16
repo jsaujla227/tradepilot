@@ -172,7 +172,7 @@ export async function advanceStage(strategyId: string): Promise<void> {
 
   const { data: row } = await supabase
     .from("strategies")
-    .select("status")
+    .select("status, stage_metrics")
     .eq("id", strategyId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -183,10 +183,15 @@ export async function advanceStage(strategyId: string): Promise<void> {
     );
   }
 
+  const existing = (row.stage_metrics ?? {}) as Record<string, unknown>;
   const { error } = await supabase
     .from("strategies")
     .update({
       status: "paper",
+      stage_metrics: {
+        ...existing,
+        paper: { startedAt: new Date().toISOString().slice(0, 10) },
+      },
       notes: "Moved to forward paper trading.",
       updated_at: new Date().toISOString(),
     })

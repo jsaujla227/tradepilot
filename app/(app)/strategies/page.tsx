@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { BacktestMetrics } from "@/lib/backtest/metrics";
+import { getHistoricalBars } from "@/lib/backtest/data";
+import { paperRun, type PaperRun } from "@/lib/backtest/paper";
 import {
   STATUS_LABEL,
   type StrategyStatus,
@@ -28,7 +30,10 @@ type StrategyRow = {
   ticker: string;
   params: { fast?: number; slow?: number } | null;
   status: StrategyStatus;
-  stage_metrics: { backtest?: BacktestSnapshot } | null;
+  stage_metrics: {
+    backtest?: BacktestSnapshot;
+    paper?: { startedAt?: string };
+  } | null;
   notes: string | null;
   created_at: string;
 };
@@ -41,6 +46,40 @@ const STATUS_STYLE: Record<StrategyStatus, string> = {
   approved: "bg-green-500/15 text-green-400",
   rejected: "bg-red-500/15 text-red-400",
 };
+
+function comparisonRows(
+  bt: BacktestMetrics | undefined,
+  paper: BacktestMetrics,
+): { label: string; backtest: string; paper: string }[] {
+  const pct = (v: number) => `${v.toFixed(2)}%`;
+  return [
+    {
+      label: "Total return",
+      backtest: bt ? pct(bt.totalReturnPct) : "—",
+      paper: pct(paper.totalReturnPct),
+    },
+    {
+      label: "Sharpe",
+      backtest: bt ? bt.sharpe.toFixed(2) : "—",
+      paper: paper.sharpe.toFixed(2),
+    },
+    {
+      label: "Win rate",
+      backtest: bt ? `${bt.winRatePct.toFixed(0)}%` : "—",
+      paper: `${paper.winRatePct.toFixed(0)}%`,
+    },
+    {
+      label: "Max drawdown",
+      backtest: bt ? pct(bt.maxDrawdownPct) : "—",
+      paper: pct(paper.maxDrawdownPct),
+    },
+    {
+      label: "Trades",
+      backtest: bt ? String(bt.tradeCount) : "—",
+      paper: String(paper.tradeCount),
+    },
+  ];
+}
 
 export default async function StrategiesPage() {
   const supabase = await createSupabaseServerClient();
@@ -55,6 +94,22 @@ export default async function StrategiesPage() {
     .select("id, name, ticker, params, status, stage_metrics, notes, created_at")
     .order("created_at", { ascending: false });
   const strategies = (data ?? []) as StrategyRow[];
+
+  // Live-compute the forward paper run for every strategy in the paper stage.
+  const today = new Date().toISOString().slice(0, 10);
+  const paperRuns = new Map<string, PaperRun>();
+  for (const s of strategies) {
+    if (s.status !== "paper") continue;
+    const startedAt = s.stage_metrics?.paper?.startedAt;
+    if (!startedAt) continue;
+    const bars = await getHistoricalBars(supabase, s.ticker, startedAt, today);
+    if (bars.length > 0) {
+      paperRuns.set(
+        s.id,
+        paperRun(bars, s.params?.fast ?? 50, s.params?.slow ?? 200),
+      );
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 px-6 py-8">
@@ -78,6 +133,8 @@ export default async function StrategiesPage() {
         <section className="space-y-3">
           {strategies.map((s) => {
             const snap = s.stage_metrics?.backtest;
+            const paperStartedAt = s.stage_metrics?.paper?.startedAt;
+            const run = paperRuns.get(s.id);
             return (
               <div
                 key={s.id}
@@ -110,8 +167,8 @@ export default async function StrategiesPage() {
                     ) : (
                       <>
                         <p className="text-[11px] text-muted-foreground">
-                          Walk-forward {snap.from} → {snap.to} ·{" "}
-                          {snap.windows} windows · OOS return{" "}
+                          Walk-forward {snap.from} → {snap.to} · {snap.windows}{" "}
+                          windows · OOS return{" "}
                           {(snap.metrics?.totalReturnPct ?? 0).toFixed(2)}% ·
                           Sharpe {(snap.metrics?.sharpe ?? 0).toFixed(2)}
                         </p>
@@ -124,6 +181,47 @@ export default async function StrategiesPage() {
                           </p>
                         ))}
                       </>
+                    )}
+                  </div>
+                )}
+
+                {/* Paper run: backtest-expected vs paper-actual */}
+                {s.status === "paper" && (
+                  <div className="rounded-md border border-border/50 bg-background/30 px-3 py-2 space-y-1.5">
+                    <p className="text-[11px] font-medium text-muted-foreground">
+                      Backtest-expected vs paper-actual
+                      {paperStartedAt ? ` · paper since ${paperStartedAt}` : ""}
+                    </p>
+                    {!run ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        No paper trading days recorded yet — the forward run
+                        accumulates as historical bars arrive.
+                      </p>
+                    ) : (
+                      <table className="w-full text-[11px] tabular-nums">
+                        <thead>
+                          <tr className="text-muted-foreground">
+                            <th className="text-left font-normal">Metric</th>
+                            <th className="text-right font-normal">Backtest</th>
+                            <th className="text-right font-normal">
+                              Paper ({run.barCount}d)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comparisonRows(snap?.metrics, run.metrics).map(
+                            (r) => (
+                              <tr key={r.label}>
+                                <td className="text-muted-foreground">
+                                  {r.label}
+                                </td>
+                                <td className="text-right">{r.backtest}</td>
+                                <td className="text-right">{r.paper}</td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
                     )}
                   </div>
                 )}
@@ -153,11 +251,6 @@ export default async function StrategiesPage() {
                         Move to paper trading
                       </button>
                     </form>
-                  )}
-                  {s.status === "paper" && (
-                    <span className="text-[11px] text-muted-foreground">
-                      Forward paper-trading validation is wired up in phase B7.
-                    </span>
                   )}
                   {s.status === "live_small" && (
                     <span className="text-[11px] text-muted-foreground">
