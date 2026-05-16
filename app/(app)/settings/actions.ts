@@ -5,6 +5,16 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getPaperTradingCriteria } from "@/lib/performance";
 import { DEFAULT_PROFILE } from "@/lib/profile";
+import {
+  exchangeRefreshToken,
+  computeExpiresAt,
+  QuestradeAuthError,
+  type QuestradeTokens,
+} from "@/lib/broker/questrade-auth";
+import {
+  upsertBrokerCredentials,
+  deleteBrokerCredentials,
+} from "@/lib/broker/credentials";
 
 const settingsSchema = z.object({
   account_size_initial: z.coerce.number().positive().max(1e12),
@@ -149,4 +159,92 @@ export async function setBrokerMode(
   if (error) return { error: error.message };
   revalidatePath("/settings");
   return { saved: true };
+}
+
+// --- Questrade connection ---------------------------------------------------
+
+const connectQuestradeSchema = z.object({
+  refresh_token: z
+    .string()
+    .trim()
+    .min(1, "Paste your Questrade refresh token")
+    .max(4096),
+});
+
+export type QuestradeConnectState = {
+  error?: string;
+  connected?: boolean;
+  disconnected?: boolean;
+};
+
+/**
+ * Validates a pasted Questrade refresh token by exchanging it, then persists
+ * the resulting (rotated) credentials. The pasted token is consumed by the
+ * exchange and is dead afterwards — only the rotated one is stored.
+ */
+export async function connectQuestrade(
+  _prev: QuestradeConnectState,
+  formData: FormData,
+): Promise<QuestradeConnectState> {
+  const parsed = connectQuestradeSchema.safeParse({
+    refresh_token: formData.get("refresh_token"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase is not configured." };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  let tokens: QuestradeTokens;
+  try {
+    tokens = await exchangeRefreshToken(parsed.data.refresh_token);
+  } catch (err) {
+    return {
+      error:
+        err instanceof QuestradeAuthError
+          ? err.message
+          : "Could not reach Questrade.",
+    };
+  }
+
+  const ok = await upsertBrokerCredentials(supabase, user.id, {
+    refreshToken: tokens.refreshToken,
+    accessToken: tokens.accessToken,
+    accessTokenExpiresAt: computeExpiresAt(tokens.expiresIn),
+    apiServer: tokens.apiServer,
+  });
+  if (!ok) return { error: "Could not save the Questrade connection." };
+
+  revalidatePath("/settings");
+  return { connected: true };
+}
+
+export async function disconnectQuestrade(
+  _prev: QuestradeConnectState,
+  _formData: FormData,
+): Promise<QuestradeConnectState> {
+  void _formData;
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase is not configured." };
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const ok = await deleteBrokerCredentials(supabase, user.id);
+  if (!ok) return { error: "Could not remove the Questrade connection." };
+
+  // Live mode with no broker credentials is invalid — fall back to paper.
+  await supabase
+    .from("profiles")
+    .update({ broker_mode: "paper" })
+    .eq("user_id", user.id);
+
+  revalidatePath("/settings");
+  return { disconnected: true };
 }

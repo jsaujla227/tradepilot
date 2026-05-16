@@ -189,8 +189,8 @@ export function SettingsForm({
               </form>
               {initial.broker_mode === "live" && (
                 <p className="text-[11px] text-yellow-400/80">
-                  Live mode: orders will route to Questrade. Ensure
-                  QUESTRADE_REFRESH_TOKEN is set in your environment.
+                  Live mode: orders route to Questrade. Connect your account in
+                  the Questrade connection section below.
                 </p>
               )}
             </div>

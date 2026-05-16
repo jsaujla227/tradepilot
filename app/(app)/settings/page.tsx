@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation";
 import { getUserAndProfile } from "@/lib/profile";
 import { getPaperTradingCriteria } from "@/lib/performance";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getBrokerCredentials } from "@/lib/broker/credentials";
 import { SettingsForm } from "./_components/settings-form";
+import { QuestradeConnect } from "./_components/questrade-connect";
 import { PerformanceScorecard } from "@/components/performance/performance-scorecard";
 
 export const metadata = { title: "Settings · TradePilot" };
@@ -13,6 +16,17 @@ export default async function SettingsPage() {
   const criteria = await getPaperTradingCriteria(
     session.profile.account_size_initial,
   );
+
+  const supabase = await createSupabaseServerClient();
+  const creds = supabase
+    ? await getBrokerCredentials(supabase, session.userId)
+    : null;
+  const questradeStatus = {
+    connected: creds !== null,
+    accountId: creds?.accountId ?? null,
+    connectedAt: creds?.connectedAt ?? null,
+    updatedAt: creds?.updatedAt ?? null,
+  };
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 md:py-14">
@@ -44,6 +58,9 @@ export default async function SettingsPage() {
               session.profile.agent_daily_capital_limit ?? 500,
           }}
         />
+        <div className="border-t border-border/40 pt-8">
+          <QuestradeConnect status={questradeStatus} />
+        </div>
         <div className="border-t border-border/40 pt-8">
           <PerformanceScorecard
             criteria={criteria}

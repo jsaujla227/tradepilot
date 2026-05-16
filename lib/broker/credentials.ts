@@ -78,3 +78,43 @@ export async function applyRotatedTokens(
   if (error || !data) return false;
   return data.length > 0;
 }
+
+/**
+ * Stores a fresh Questrade connection (insert or full overwrite). account_id
+ * is left untouched so a re-connect keeps any selected account.
+ */
+export async function upsertBrokerCredentials(
+  supabase: SupabaseClient,
+  userId: string,
+  fields: {
+    refreshToken: string;
+    accessToken: string;
+    accessTokenExpiresAt: string;
+    apiServer: string;
+  },
+): Promise<boolean> {
+  const { error } = await supabase.from("broker_credentials").upsert(
+    {
+      user_id: userId,
+      provider: "questrade",
+      refresh_token: fields.refreshToken,
+      access_token: fields.accessToken,
+      access_token_expires_at: fields.accessTokenExpiresAt,
+      api_server: fields.apiServer,
+    },
+    { onConflict: "user_id" },
+  );
+  return !error;
+}
+
+/** Removes the user's broker connection entirely. */
+export async function deleteBrokerCredentials(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("broker_credentials")
+    .delete()
+    .eq("user_id", userId);
+  return !error;
+}
