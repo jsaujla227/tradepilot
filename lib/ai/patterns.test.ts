@@ -65,6 +65,29 @@ describe("extractPatterns", () => {
     expect(p.conditions.sector).toBe("Tech");
     expect(p.conditions.direction).toBe("long");
     expect(p.conditions.r_tier).toBe("2-3");
+    // 3 wins (R 2.5 + 2.8 + 2.1) vs 1 loss (R 0.5)
+    expect(p.stats.avg_win_r).toBeCloseTo(7.4 / 3, 5);
+    expect(p.stats.avg_loss_r).toBe(0.5);
+    expect(p.stats.profit_factor).toBeCloseTo(14.8, 5);
+  });
+
+  it("reports profit_factor as null when a group has no losing trades", () => {
+    const reviews = [
+      mkReview("AAPL", 100, 2.0),
+      mkReview("MSFT", 120, 2.5),
+      mkReview("GOOG", 90, 2.2),
+    ];
+    const checklists = [
+      mkChecklist("AAPL", "buy", 2.0),
+      mkChecklist("MSFT", "buy", 2.5),
+      mkChecklist("GOOG", "buy", 2.2),
+    ];
+    const patterns = extractPatterns(reviews, checklists, []);
+    expect(patterns.length).toBeGreaterThan(0);
+    const p = patterns[0]!;
+    expect(p.stats.profit_factor).toBeNull();
+    expect(p.stats.avg_loss_r).toBe(0);
+    expect(p.stats.win_rate).toBe(1);
   });
 
   it("classifies a group with win_rate < 0.45 as losing", () => {

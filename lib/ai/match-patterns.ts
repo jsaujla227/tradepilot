@@ -24,8 +24,9 @@ function toRTier(r: number): RTier {
  * Returns patterns that match the given setup, sorted by pattern_type
  * (winning first, then neutral, then losing) and sample_count descending.
  *
- * A pattern matches only when every condition it defines matches the setup.
- * Patterns with no conditions match everything (catch-all neutral).
+ * A pattern matches only when every condition it defines matches the setup,
+ * and it defines at least one condition — fully unconstrained patterns are
+ * skipped rather than treated as catch-alls.
  */
 export function matchPatterns(
   patterns: TradePattern[],

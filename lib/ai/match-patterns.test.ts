@@ -10,7 +10,15 @@ const mkPattern = (
   pattern_type: type,
   description: "Test pattern",
   conditions,
-  stats: { win_rate: 0.6, avg_r: 1.5, expectancy: 0.5, sample_count },
+  stats: {
+    win_rate: 0.6,
+    avg_r: 1.5,
+    avg_win_r: 2.0,
+    avg_loss_r: 1.0,
+    expectancy: 0.5,
+    profit_factor: 1.8,
+    sample_count,
+  },
 });
 
 const setup: SetupInput = {

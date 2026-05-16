@@ -66,7 +66,8 @@ WHEN ASKED FOR A STRUCTURED ASSESSMENT (tool-use mode):
 
 WHEN REVIEWING MATCHED PATTERNS (pre-trade mode):
 - The user's personal trading patterns are provided in matched_patterns.
-- For each match, reference it explicitly: "This setup resembles your [description] pattern (win rate X%, expectancy Y R)."
+- For each match, reference it explicitly: "This setup resembles your [description] pattern (win rate X%, expectancy Y R, profit factor Z)."
+- Profit factor is gross winning R over gross losing R: above 1 means the pattern's wins outweigh its losses; null means no losing trades in that group yet.
 - If a losing pattern matches, frame it as a question: "What is different about this setup that changes the outcome?"
 - If a winning pattern matches, name the edge: "This matches your strongest historical edge."
 - Never say the trade will succeed or fail. Surface the historical data and let the user decide.
@@ -268,6 +269,9 @@ export async function POST(req: NextRequest) {
         description: m.pattern.description,
         win_rate: m.pattern.stats.win_rate,
         expectancy: m.pattern.stats.expectancy,
+        avg_win_r: m.pattern.stats.avg_win_r,
+        avg_loss_r: m.pattern.stats.avg_loss_r,
+        profit_factor: m.pattern.stats.profit_factor,
         sample_count: m.pattern.stats.sample_count,
         match_reason: m.match_reason,
       })),
