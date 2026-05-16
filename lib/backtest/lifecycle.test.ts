@@ -4,6 +4,7 @@ import {
   nextStatus,
   isLegalTransition,
   evaluateBacktestGate,
+  evaluatePaperGate,
 } from "./lifecycle";
 
 const metrics = (over: Partial<BacktestMetrics>): BacktestMetrics => ({
@@ -72,5 +73,35 @@ describe("evaluateBacktestGate", () => {
       false,
     );
     expect(evaluateBacktestGate(metrics({}), 2.5).passed).toBe(false);
+  });
+});
+
+describe("evaluatePaperGate", () => {
+  it("passes when the paper run is long, profitable and clean", () => {
+    const r = evaluatePaperGate(
+      metrics({ totalReturnPct: 6, maxDrawdownPct: 8, tradeCount: 9 }),
+      90,
+    );
+    expect(r.passed).toBe(true);
+  });
+
+  it("fails a paper run that is too short", () => {
+    const r = evaluatePaperGate(
+      metrics({ totalReturnPct: 6, maxDrawdownPct: 8, tradeCount: 9 }),
+      20,
+    );
+    expect(r.passed).toBe(false);
+    expect(r.checks.find((c) => c.label.includes("Long enough"))!.ok).toBe(
+      false,
+    );
+  });
+
+  it("fails on a losing paper run or excessive drawdown", () => {
+    expect(
+      evaluatePaperGate(metrics({ totalReturnPct: -2 }), 90).passed,
+    ).toBe(false);
+    expect(
+      evaluatePaperGate(metrics({ maxDrawdownPct: 35 }), 90).passed,
+    ).toBe(false);
   });
 });
